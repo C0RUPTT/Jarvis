@@ -1,0 +1,16 @@
+# Brain
+anthropic>=2.13.0
+python-dotenv>=1.0
+
+# Voice (wake word, speech-to-text, text-to-speech)
+numpy>=1.26
+sounddevice>=0.4.6
+faster-whisper>=1.2
+openwakeword>=0.6
+pyttsx3>=2.98
+
+# Extras for computer control
+psutil>=5.9
+mss>=9.0
+pillow>=10.0
+pyperclip>=1.8
