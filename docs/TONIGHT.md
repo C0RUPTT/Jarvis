@@ -125,7 +125,7 @@ Lock the phone, then do each test:
 | 5 | "Back to normal", then "Build me a dice-roller web app" | A Telegram notification when it's done (read aloud if AirPods are in) |
 | 6 | Follow-up: "Make the dice roller dark mode" | A new job that changes the same app |
 | 7 | Telegram voice note: "What's the weather tomorrow?" | A voice reply |
-| 8 | Turn on Wi-Fi off / mobile data only, and repeat test 1 | Still works away from home Wi-Fi |
+| 8 | Turn Wi-Fi off (mobile data only) and repeat test 1 | Still works away from home Wi-Fi |
 
 Then on the laptop:
 ```bash
