@@ -369,6 +369,27 @@ What changed after stress-testing the plan, and why.
    - Start with **one** routine (the morning briefing).
    - Every unprompted message gets 👍 / 👎 buttons, and routines that keep getting 👎 are retired.
 
+### Revision 3: speed, resilience and learning from real use
+1. **Instant fast path:** common requests are handled by plain code, without Claude:
+   timers, alarms, notes, "add to my list", "what's next", "what did I miss", quiet and hold
+   modes, opening apps. They answer in under a second and use no Claude usage. Claude handles
+   only open-ended requests.
+2. **Never goes dead:** if the Claude usage window is used up or Claude is down, Jarvis says so
+   ("I'm in low-power mode until 3pm") and the fast path keeps working: timers, lists, notes,
+   inbox and reminders. Requests that need Claude are queued and run after the reset.
+3. **Work done ahead of time:** the morning briefing and pre-meeting notes are prepared before
+   they're needed, so they play instantly.
+4. **Hears your words right:** names of your people, places and projects are fed to Whisper as
+   vocabulary, and Jarvis corrects likely mishearings against what it knows ("Jake" vs "Jay").
+5. **Onboarding interview:** in the first week, Jarvis asks a few short questions a day (your
+   people, routine, goals, preferences) to personalise itself quickly, instead of learning slowly.
+6. **Learns from its mistakes:** every interaction is logged with how fast it was and whether it
+   worked. Once a week Jarvis reviews its failures (misheard, slow, wrong, 👎) and suggests fixes
+   in a two-minute chat with you: "You corrected me three times about Mike's last name, so I've
+   fixed it. Also, should the briefing be shorter?"
+7. **Day simulator:** a test that plays a full fake day (alarm, commute, meetings, jobs, quiet
+   hours) against Jarvis, to catch problems with delivery and routines before you do.
+
 ### Measurable targets
 | Metric | Target |
 |---|---|
