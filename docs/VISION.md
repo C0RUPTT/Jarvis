@@ -321,24 +321,81 @@ That way Jarvis keeps gaining abilities without waiting for this codebase to cha
 
 ---
 
-## 13. Roadmap
+## 13. Ruthless review (revision 2)
+
+What changed after stress-testing the plan, and why.
+
+### Cut or postponed
+| Item | Decision | Why |
+|---|---|---|
+| 18 life areas at once | **Build on demand.** Start with calendar, tasks, notes and watchers, and add an area only after you've asked for it twice | Unused features are maintenance with no payoff |
+| ntfy, email channel | **Dropped.** Telegram does notifications, the inbox, approvals and files | Every channel is something else to break |
+| Web app as a main channel | **Demoted** to dashboard plus optional live conversation | Siri and Telegram cover locked and on-the-go use |
+| Meaning-based search (embeddings) | **Postponed.** Start with SQLite full-text search plus Claude reading summaries | Add only if search actually fails |
+| Kokoro voice | **Optional.** Edge neural voice is the default | Speed matters more than voice polish, and the Siri path uses Siri's voice anyway |
+| Self-written skills | **Moved last**, after the trust layer is proven | High risk before approvals and logs exist |
+| Native iPhone app | Backlog | Not $0 |
+
+### Biggest risks and fixes
+1. **The Claude Pro usage limit is the real bottleneck, not the server.**
+   - Claude Code's default system prompt is large (around 38k tokens on the first turn of each session).
+   - Fixes:
+     - A lean **talker** session (trimmed prompt and tools, Haiku, warm cache).
+     - **Plain code for checks** (watchers, routines, inbox): Claude is only asked when judgment is needed.
+     - **One heavy coding job at a time.**
+     - A **usage meter** with a reserve kept for conversation.
+     - Measure tokens per turn from the first day.
+2. **Siri is the weakest link** (dictation accuracy, timeouts, no interruptions).
+   - Rule: **every Siri request gets a spoken answer within about 8 seconds.** Anything longer becomes a background job with "On it, I'll tell you when it's done."
+   - Prove it on a real iPhone **before** building anything else (phase 0).
+3. **Getting to the server from the phone.** Tailscale on the iPhone must be connected, or Siri requests fail.
+   - Option A: Tailscale VPN "on demand" (the most private).
+   - Option B: Cloudflare Tunnel (free) giving a public HTTPS address with a long secret token (no VPN needed on the phone).
+   - Decide in phase 0, based on what's reliable on your phone.
+   - Telegram needs neither: the bot connects outward.
+4. **The "lethal trifecta" (prompt injection):** private data plus untrusted content plus the ability to send things out is how assistants get hijacked.
+   - Sessions that read email or web pages get **no tools that send or post**.
+   - Anything those sessions want to do goes through an **approval**.
+   - The Telegram bot answers only your user ID.
+   - Jarvis runs as a separate non-admin user, and coding jobs are confined to the projects folder.
+5. **Logins expire silently.**
+   - Google API tokens expire every 7 days while the OAuth app is in "testing" mode. Fix: publish it (it stays personal), or use **iCloud with an app-specific password**, which doesn't expire.
+   - Claude Code's login can also expire. Jarvis detects it and asks you to log in again over Telegram, instead of silently failing.
+6. **Oracle signup friction** (ARM capacity "out of capacity" errors, idle reclaim).
+   - Jarvis must run anywhere, including a laptop, so Oracle never blocks progress.
+   - Use a Pay-As-You-Go account (still $0) to avoid reclaim.
+   - Keep backups so moving servers takes minutes.
+7. **Unprompted messages are the fastest way to make you mute Jarvis.**
+   - Start with **one** routine (the morning briefing).
+   - Every unprompted message gets 👍 / 👎 buttons, and routines that keep getting 👎 are retired.
+
+### Measurable targets
+| Metric | Target |
+|---|---|
+| Siri round trip (stop speaking → hear the answer) | Under 5 seconds typically, under 8 seconds at worst |
+| Web app time to first word | Under 2 seconds |
+| Unprompted messages rated 👍 | 80% or more |
+| Claude usage reserved for conversation | At least 25% of each window |
+| Time to restore Jarvis on a new server | Under 15 minutes |
+
+## 14. Roadmap
 
 Each phase ends with a "done when" test you can try yourself.
 
 | Phase | Builds | Done when |
 |---|---|---|
-| **1. Foundation** | Cloud server install, the talker/worker split, job system, inbox and delivery engine (priorities, quiet and hold modes), the Siri "Jarvis" Shortcut, Telegram channel, phone actions (any link or app, alarms, music, messages) | With the phone locked: "Siri, Jarvis, build me a tip calculator" → it's built in the background → you hear it's done → "Siri, Jarvis, what did I miss?" works after hold mode |
-| **2. Feels human** | Streaming voice, Kokoro voice, instant acknowledgments, barge-in, context from the phone, conversation memory | A five-minute back-and-forth in the web app feels like a call, not a walkie-talkie |
-| **3. Life admin** | Calendar, email, tasks, notes, people, watchers, documents | "What's my day look like?" and "anything important in my email?" give correct, useful answers |
-| **4. Proactive** | Morning briefing, commute, pre-meeting, arriving home, end of day, wind-down, weekly review, interruption budget | A week of routines where every unprompted message was worth it |
-| **5. Coding studio** | Projects, plan-then-build, self-testing, screenshots, publishing, git undo, approvals, usage awareness | An app requested by voice is live at a real web address without opening a laptop |
-| **6. Trust and operations** | Approval levels, activity log, lockdown, secrets, backups, dashboard, self-update, tests | "What did you do today?" is complete and correct; restoring from backup works |
-| **7. Self-extending** | Skill writing with approval and rollback | "Learn how to…" produces a working, approved new skill |
-| **8. Health and home** | Apple Health and HomeKit through Shortcuts, laptop agent (optional) | Sleep-aware briefing; "movie mode" works by voice |
+| **0. Prove the risky parts** (1–2 evenings) | Minimal server on the laptop or Oracle; the Siri Shortcut talking to it with the phone locked; Telegram bot echo; Tailscale vs Cloudflare Tunnel test; token-per-turn measurement | With the phone locked, "Siri, Jarvis, what's 2+2?" answers in under 5 seconds, 10 times in a row |
+| **1. Foundation** | Lean talker plus background job runner; inbox and delivery (priorities, quiet and hold modes); Telegram notifications and approvals; phone actions (any link or app, alarms, music, messages); usage meter | With the phone locked: "Siri, Jarvis, build me a tip calculator" → it's built in the background → you're told it's done → "what did I miss?" works after hold mode |
+| **2. Trust** | Approval levels, activity log, lockdown, separate user, backups, re-login alerts | "What did you do today?" is complete; restoring a backup works |
+| **3. Coding studio** | Projects, plan-then-build, self-testing, screenshots to Telegram, free publishing, git undo | An app requested by voice is live at a real web address without opening a laptop |
+| **4. Feels human** | Streaming voice, instant acknowledgments, barge-in in the web app, context from the phone, conversation memory | A five-minute talk in the web app feels like a call |
+| **5. Life admin** | Calendar, tasks, notes, watchers first; email and people next | "What's my day look like?" is correct and useful every day for a week |
+| **6. Proactive** | Morning briefing first, then other routines one at a time, with 👍 / 👎 feedback | A week where 80% or more of unprompted messages are rated 👍 |
+| **7. Extend** | Self-written skills, Health and HomeKit through Shortcuts, optional laptop agent, Kokoro voice | "Learn how to…" produces a working, approved skill |
 
 ---
 
-## 14. Decisions needed from you
+## 15. Decisions needed from you
 
 1. **Calendar and email:** Google (Gmail and Google Calendar) or iCloud?
 2. **Telegram:** okay to use it as Jarvis's chat and notification channel?
