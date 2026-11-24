@@ -26,7 +26,9 @@ class Config:
     effort: str
     cc_model: str              # model alias for the "claude-code" brain: sonnet / opus / haiku
     cc_permission_mode: str    # Claude Code permission mode: auto / acceptEdits / default / bypassPermissions
-    workdir: Path              # folder Claude Code starts in
+    workdir: Path              # folder the talker session starts in
+    projects_dir: Path         # where background jobs build things
+    worker_model: str          # model for background jobs (coding, building apps)
 
     # Voice
     whisper_model: str
@@ -39,7 +41,10 @@ class Config:
     host: str
     port: int
     token: str
-    ntfy_topic: str            # free push notifications via the ntfy app
+    ntfy_topic: str            # fallback push notifications via the ntfy app
+    telegram_token: str        # from @BotFather
+    telegram_user_id: str      # your numeric id (from @userinfobot); the bot ignores everyone else
+    siri_budget: float         # seconds before a Siri request says "still working" and finishes later
 
     unsafe_no_confirm: bool
 
@@ -64,6 +69,8 @@ class Config:
             cc_model=os.getenv("JARVIS_CC_MODEL", "sonnet"),
             cc_permission_mode=os.getenv("JARVIS_CC_PERMISSION_MODE", "auto"),
             workdir=Path(os.getenv("JARVIS_WORKDIR", Path.home())).expanduser(),
+            projects_dir=Path(os.getenv("JARVIS_PROJECTS_DIR", Path.home() / "jarvis-projects")).expanduser(),
+            worker_model=os.getenv("JARVIS_WORKER_MODEL", "sonnet"),
             whisper_model=os.getenv("JARVIS_WHISPER_MODEL", "base.en"),
             wake_threshold=float(os.getenv("JARVIS_WAKE_THRESHOLD", "0.5")),
             tts_voice=os.getenv("JARVIS_TTS_VOICE", ""),
@@ -73,6 +80,9 @@ class Config:
             port=int(os.getenv("JARVIS_PORT", "8765")),
             token=os.getenv("JARVIS_TOKEN") or _stored_token(data_dir),
             ntfy_topic=os.getenv("JARVIS_NTFY_TOPIC", ""),
+            telegram_token=os.getenv("JARVIS_TELEGRAM_TOKEN", ""),
+            telegram_user_id=os.getenv("JARVIS_TELEGRAM_USER_ID", ""),
+            siri_budget=float(os.getenv("JARVIS_SIRI_BUDGET", "7")),
             unsafe_no_confirm=_env_bool("JARVIS_UNSAFE_NO_CONFIRM"),
         )
 

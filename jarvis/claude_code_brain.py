@@ -1,8 +1,10 @@
-"""The default brain: Claude Code running on the laptop under your Claude Pro/Max subscription.
+"""The default brain: Claude Code under your Claude Pro/Max subscription (no API bill).
 
-One long-lived `claude` process holds the conversation (fast follow-ups, no restart per question).
-Claude Code brings its own tools (shell, files, web search and fetch, plus any MCP servers or
-connectors you've set up) and gets Jarvis's tools through the local MCP bridge.
+This is the fast "talker": one long-lived, lean `claude` session that holds the conversation.
+It replaces Claude Code's large default prompt with Jarvis's own and only has web search plus
+Jarvis's tools (served by the local MCP bridge). Measured: about 1.5k tokens to start instead of
+about 38k. Heavy work (coding, building apps) goes to background jobs that run full Claude Code
+(see jobs.py).
 """
 
 from __future__ import annotations
@@ -12,10 +14,11 @@ import queue
 import shutil
 import subprocess
 import threading
+import time
 from datetime import datetime
 from typing import Callable
 
-from . import mcp_bridge, tools
+from . import mcp_bridge, metrics, tools
 from .persona import build_persona
 
 TURN_TIMEOUT = 600  # seconds; long tasks (coding, research) can take a while
@@ -44,23 +47,24 @@ class ClaudeCodeBrain:
         self.proc: subprocess.Popen | None = None
         self.lines: queue.Queue = queue.Queue()
         self.lock = threading.Lock()
+        self.last_usage: dict | None = None
 
     # -- process management --------------------------------------------------
 
     def _command(self, resume: str | None) -> list[str]:
         cfg = self.ctx.config
         # Plain quotes only: on Windows the command line passes through cmd.exe.
-        persona = build_persona(cfg).replace('"', "'")
+        persona = build_persona(cfg, talker=True).replace('"', "'")
         cmd = [
             self.claude, "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json", "--verbose",
             "--model", cfg.cc_model,
             "--effort", cfg.effort,
-            "--permission-mode", cfg.cc_permission_mode,
+            "--system-prompt", persona,          # lean: replaces Claude Code's large default prompt
+            "--tools", "WebSearch,WebFetch",     # built-in tools for the talker; the rest are jobs
             "--allowedTools", "mcp__jarvis", "WebSearch", "WebFetch",
-            "--mcp-config", str(self.mcp_config),
-            "--append-system-prompt", persona,
+            "--strict-mcp-config", "--mcp-config", str(self.mcp_config),
         ]
         if resume:
             cmd += ["--resume", resume]
@@ -110,8 +114,10 @@ class ClaudeCodeBrain:
             for attempt in range(2):
                 if self.proc is None or self.proc.poll() is not None:
                     self._start(fresh=attempt > 0)  # if resuming fails, start fresh
+                started = time.monotonic()
                 reply = self._turn(text)
                 if reply is not None:
+                    metrics.record("turn", time.monotonic() - started, self.last_usage)
                     return reply
                 self._stop()
             return "I couldn't reach Claude Code. Try running `claude` on the laptop to check it's logged in."
@@ -146,6 +152,7 @@ class ClaudeCodeBrain:
             if kind == "assistant":
                 self._handle_assistant(event)
             elif kind == "result":
+                self.last_usage = event.get("usage")
                 if event.get("session_id"):
                     self.session_file.write_text(event["session_id"])
                 result = (event.get("result") or "").strip()

@@ -1,6 +1,8 @@
 """Run Jarvis.
 
-    python -m jarvis serve      # phone mode: talk to Jarvis from your iPhone (docs/PHONE_SETUP.md)
+    python -m jarvis serve      # phone mode: Siri, Telegram and the web app (docs/TONIGHT.md)
+    python -m jarvis doctor     # check the setup and say what to fix
+    python -m jarvis stats      # speed and Claude usage measurements
     python -m jarvis            # laptop voice mode: say "Hey Jarvis", then talk
     python -m jarvis --ptt      # laptop voice mode, press Enter to talk instead of the wake word
     python -m jarvis --text     # type instead of talking (handy for testing)
@@ -12,10 +14,8 @@ import argparse
 import re
 import sys
 
-from .announcer import Announcer
-from .brain import make_brain
+from . import runtime
 from .config import Config
-from .tools import Context
 
 YES = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|go ahead|do it|confirm|affirmative|please do)\b", re.I)
 EXIT = re.compile(r"\b(goodbye|good bye|shut down|power down|that will be all|exit|quit)\b", re.I)
@@ -27,10 +27,9 @@ def run_text(config: Config) -> None:
         answer = input(f"JARVIS: {question} [y/N] ").strip().lower()
         return answer in {"y", "yes"} or YES.search(answer) is not None
 
-    announcer = Announcer(config.ntfy_topic, speak=lambda t: print(f"\nJARVIS: {t}\nYou: ", end="", flush=True))
-    ctx = Context(config=config, confirm=confirm_text, announce=announcer.announce,
-                  extras={"announcer": announcer})
-    brain = make_brain(ctx, on_interim=lambda t: print(f"JARVIS: {t}"))
+    rt = runtime.build(config, speak=lambda t: print(f"\nJARVIS: {t}\nYou: ", end="", flush=True),
+                       on_interim=lambda t: print(f"JARVIS: {t}"), confirm=confirm_text, telegram=False)
+    brain = rt.brain
     print(f"JARVIS: At your service, {config.user_name}. (type 'exit' to quit, 'reset' for a new conversation)")
     while True:
         try:
@@ -47,7 +46,7 @@ def run_text(config: Config) -> None:
             brain.reset()
             print("JARVIS: Fresh slate.")
             continue
-        print(f"JARVIS: {brain.ask(text)}")
+        print(f"JARVIS: {rt.ask(text)}")
 
 
 def run_voice(config: Config, push_to_talk: bool) -> None:
@@ -63,10 +62,9 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
         print(f"You: {answer}")
         return YES.search(answer) is not None
 
-    announcer = Announcer(config.ntfy_topic, speak=lambda t: speaker.say(t, wait=False))
-    ctx = Context(config=config, confirm=confirm, announce=announcer.announce,
-                  extras={"announcer": announcer})
-    brain = make_brain(ctx, on_interim=lambda t: speaker.say(t))
+    rt = runtime.build(config, speak=lambda t: speaker.say(t, wait=False),
+                       on_interim=lambda t: speaker.say(t), confirm=confirm, telegram=False)
+    brain = rt.brain
 
     wake = listener.has_wake_word
     speaker.say(f"Jarvis online. {'Say Hey Jarvis' if wake else 'Press Enter'} when you need me, {config.user_name}.")
@@ -96,7 +94,7 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
                     brain.reset()
                     speaker.say("Fresh slate.")
                     break
-                speaker.say(brain.ask(text))
+                speaker.say(rt.ask(text))
                 timeout = 5.0
         except KeyboardInterrupt:
             print()
@@ -107,7 +105,8 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis", description="A voice assistant powered by Claude.")
-    parser.add_argument("mode", nargs="?", choices=["serve"], help="'serve' runs the phone server")
+    parser.add_argument("mode", nargs="?", choices=["serve", "doctor", "stats"],
+                        help="serve: phone server | doctor: check setup | stats: measurements")
     parser.add_argument("--speak-on-laptop", action="store_true",
                         help="with serve: also say timers/reminders out loud on the laptop")
     parser.add_argument("--text", action="store_true", help="type instead of speaking")
@@ -115,6 +114,15 @@ def main() -> None:
     args = parser.parse_args()
 
     config = Config.load()
+    if args.mode == "doctor":
+        from .doctor import run_doctor
+
+        sys.exit(run_doctor(config))
+    if args.mode == "stats":
+        from .metrics import report
+
+        print(report(config.data_dir))
+        return
     if args.mode == "serve":
         try:
             from .server import serve

@@ -1,55 +1,39 @@
-"""Phone server: the iPhone web app and iOS Shortcuts talk to Jarvis on the laptop through this.
-
-Run with `python -m jarvis serve`, then expose it privately to your phone with Tailscale
-(see docs/PHONE_SETUP.md). Every API call needs the secret token.
+"""Phone server: the Siri Shortcut, the iPhone web app and the Telegram bot all talk to Jarvis
+through this. Run with `python -m jarvis serve` (see docs/PHONE_SETUP.md). Every web request
+needs the secret token; the Telegram bot only answers your user id.
 """
 
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import hmac
 import tempfile
+import time
 from pathlib import Path
 
-from .announcer import Announcer
-from .brain import make_brain
+from . import metrics, runtime
 from .config import Config
-from .tools import Context
 from .voice.tts import clean_for_speech, synthesize_mp3
 
 WEB_DIR = Path(__file__).parent / "web"
+STILL_WORKING = "Still working on that. I'll message you the answer as soon as it's ready."
 
 
 def create_app(config: Config, speak_on_laptop: bool = False):
     from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
     from fastapi.responses import FileResponse, PlainTextResponse
 
-    speaker = None
+    speak = None
     if speak_on_laptop:
         from .voice.tts import Speaker
 
         speaker = Speaker(voice=config.tts_voice, rate=config.tts_rate)
+        speak = lambda text: speaker.say(text, wait=False)  # noqa: E731
 
-    announcer = Announcer(config.ntfy_topic, speak=(lambda t: speaker.say(t, wait=False)) if speaker else None)
-    ctx = Context(
-        config=config,
-        # Nobody is at the laptop to answer, so risky tools of the API brain are refused unless
-        # JARVIS_UNSAFE_NO_CONFIRM=1. (The Claude Code brain uses Claude Code's own permission mode.)
-        confirm=lambda question: False,
-        announce=announcer.announce,
-        extras={"announcer": announcer},
-    )
-    brain = make_brain(ctx, on_interim=lambda text: print(f"JARVIS (interim): {text}"))
-
-    whisper: list = []  # loaded on first voice request
-
-    def transcribe(path: str) -> str:
-        if not whisper:
-            from .voice.listener import Transcriber
-
-            whisper.append(Transcriber(config.whisper_model))
-        return whisper[0].transcribe(path)
-
+    rt = runtime.build(config, speak=speak, on_interim=lambda t: print(f"JARVIS (interim): {t}"))
+    brain, announcer = rt.brain, rt.announcer
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
 
     def check(token: str | None) -> None:
@@ -66,6 +50,21 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             "audio": base64.b64encode(audio).decode() if audio else None,
         }
 
+    def ask_within_budget(text: str) -> str:
+        """Siri gives up on slow requests, so answer within the budget no matter what.
+        A late reply is delivered by notification instead of being lost."""
+        future = pool.submit(rt.ask, text)
+        try:
+            return future.result(timeout=config.siri_budget)
+        except concurrent.futures.TimeoutError:
+            def deliver_late(f):
+                try:
+                    announcer.announce(f"About \"{text[:80]}\": {f.result()}")
+                except Exception as e:  # noqa: BLE001
+                    announcer.announce(f"Sorry, \"{text[:80]}\" failed: {e}")
+            future.add_done_callback(deliver_late)
+            return STILL_WORKING
+
     @app.get("/")
     def index():
         return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
@@ -73,7 +72,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     @app.get("/api/status")
     def status(x_jarvis_token: str | None = Header(None)):
         check(x_jarvis_token)
-        return {"ok": True, "user_name": config.user_name, "brain": config.brain}
+        return {"ok": True, "user_name": config.user_name, "brain": config.brain,
+                "telegram": rt.telegram is not None, "mode": announcer.mode}
 
     @app.post("/api/talk")
     def talk(audio: UploadFile = File(...), x_jarvis_token: str | None = Header(None)):
@@ -84,13 +84,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             f.write(audio.file.read())
             path = f.name
         try:
-            heard = transcribe(path)
+            heard = rt.transcribe(path)
         finally:
             Path(path).unlink(missing_ok=True)
         print(f"\nYou (phone): {heard!r}")
         if len(heard.strip(" .!?,")) < 2:
             return {"heard": "", "reply": "", "speech": "", "audio": None}
-        return respond(brain.ask(heard), heard=heard)
+        return respond(rt.ask(heard), heard=heard)
 
     @app.post("/api/ask")
     def ask(
@@ -98,17 +98,19 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         x_jarvis_token: str | None = Header(None),
         format: str = Query("json"),
     ):
-        """Text in, text out. Used by the web app's keyboard and by iOS Shortcuts / Siri."""
+        """Text in, text out. format=text is for the Siri Shortcut: plain text, always fast."""
         check(x_jarvis_token or payload.get("token"))
         text = str(payload.get("text", "")).strip()
         if not text:
             raise HTTPException(status_code=400, detail="No text")
         print(f"\nYou: {text}")
-        reply = brain.ask(text)
-        if format == "text":  # simplest for Shortcuts: the reply as plain text
+        if format == "text":
+            started = time.monotonic()
+            reply = clean_for_speech(ask_within_budget(text))
+            metrics.record("siri", time.monotonic() - started, late=reply == STILL_WORKING)
             print(f"JARVIS: {reply}")
-            return PlainTextResponse(clean_for_speech(reply))
-        return respond(reply, heard=text, with_audio=bool(payload.get("audio", True)))
+            return PlainTextResponse(reply)
+        return respond(rt.ask(text), heard=text, with_audio=bool(payload.get("audio", True)))
 
     @app.post("/api/reset")
     def reset(x_jarvis_token: str | None = Header(None)):
@@ -124,7 +126,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
 
     @app.on_event("shutdown")
     def shutdown():
-        brain.close()
+        rt.close()
 
     return app
 
@@ -135,8 +137,8 @@ def serve(config: Config, speak_on_laptop: bool = False) -> None:
     app = create_app(config, speak_on_laptop)
     print("\n" + "=" * 64)
     print(f" Jarvis is listening on http://{config.host}:{config.port}")
-    print(" On your phone, open your Tailscale address with this token:")
-    print(f"   https://<your-laptop>.<your-tailnet>.ts.net/?token={config.token}")
-    print(" (see docs/PHONE_SETUP.md)")
+    print(" Web app on your phone (through Tailscale):")
+    print(f"   https://<your-computer>.<your-tailnet>.ts.net/?token={config.token}")
+    print(" Siri Shortcut: see docs/TONIGHT.md")
     print("=" * 64 + "\n")
     uvicorn.run(app, host=config.host, port=config.port, log_level="warning")

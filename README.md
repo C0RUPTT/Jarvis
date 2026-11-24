@@ -14,7 +14,8 @@ iPhone  ──(Tailscale, private)──►  laptop: Whisper ► Claude Code ►
                                        └─ timers, reminders, weather, clipboard, memory
 ```
 
-**Start here: [docs/PHONE_SETUP.md](docs/PHONE_SETUP.md)** (about 30 minutes, step by step, for Kubuntu or Windows).
+**Start here: [docs/TONIGHT.md](docs/TONIGHT.md)** (phase 0 setup and test, about 60 minutes).
+The full design and roadmap are in [docs/VISION.md](docs/VISION.md).
 
 ## What it can do
 
@@ -36,7 +37,9 @@ don't have a dedicated tool.
 ## Ways to run it
 
 ```bash
-python -m jarvis serve      # phone mode (main use): talk from your iPhone
+python -m jarvis serve      # phone mode (main use): Siri, Telegram, web app
+python -m jarvis doctor     # checks the setup and prints your Siri URL and token
+python -m jarvis stats      # speed and Claude usage measurements
 python -m jarvis --text     # type to Jarvis in the terminal (quick test)
 python -m jarvis            # laptop voice mode: say "Hey Jarvis" to the laptop's microphone
 python -m jarvis --ptt      # laptop voice mode with push-to-talk (Enter)
@@ -81,7 +84,12 @@ jarvis/
   __main__.py            entry point: serve / text / voice modes
   server.py              phone server (web app + API for iOS Shortcuts)
   web/index.html         the iPhone app: hands-free conversation UI
-  claude_code_brain.py   default brain: a long-running Claude Code session
+  runtime.py             wires everything together; every request goes fast path → Claude
+  fastpath.py            instant commands without Claude (hold / quiet / what did I miss / job status)
+  claude_code_brain.py   default brain: a lean, long-running Claude Code "talker" session
+  jobs.py                background worker: full Claude Code for coding and building apps
+  telegram.py            Telegram chat, voice notes and notifications
+  metrics.py, doctor.py  measurements and the setup checker
   brain.py               alternative brain: the Claude API, plus brain selection
   mcp_bridge.py          gives Jarvis's tools to Claude Code (local MCP server)
   persona.py             Jarvis's personality and rules
