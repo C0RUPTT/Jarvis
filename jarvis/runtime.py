@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable
 
 from . import metrics
@@ -36,11 +37,26 @@ class Runtime:
         from . import fastpath
 
         started = time.monotonic()
+        # Talking to Jarvis after 4am ends night mode; mention anything that came in overnight.
+        woke = datetime.now().hour >= 4 and self.announcer.wake()
         reply = fastpath.handle(text, self)
         if reply is not None:
             metrics.record("fast", time.monotonic() - started)
-            return reply
-        return self.brain.ask(text)
+        else:
+            reply = self.brain.ask(text)
+        held = self.announcer.peek_held()
+        if woke and held:
+            reply += f" Also, good morning: {held} thing{'s' if held != 1 else ''} came in overnight. Ask me what you missed."
+        return reply
+
+    def morning(self) -> str:
+        """Called by the phone's wake-up automation (alarm stopped / Sleep Focus off)."""
+        self.announcer.wake()
+        held = self.announcer.take_held()
+        greeting = f"Good morning, {self.config.user_name}."
+        if not held:
+            return greeting + " Nothing came in overnight."
+        return f"{greeting} Overnight: " + " ".join(held)
 
     def close(self) -> None:
         self.brain.close()
@@ -51,7 +67,8 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
           confirm: Callable[[str], bool] | None = None,
           telegram: bool = True) -> Runtime:
     metrics.init(config.data_dir)
-    announcer = Announcer(config.ntfy_topic, speak=speak)
+    announcer = Announcer(config.ntfy_topic, speak=speak, state_file=config.data_dir / "delivery.json",
+                          quiet_start=config.quiet_start)
     ctx = Context(
         config=config,
         # Unattended by default: risky actions in the API brain are refused unless a confirm

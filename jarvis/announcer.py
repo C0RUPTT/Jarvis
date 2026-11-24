@@ -5,32 +5,43 @@ laptop speakers. Quiet mode sends silently; hold mode keeps everything for later
 from __future__ import annotations
 
 import itertools
+import json
 import threading
 import time
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 MODES = ("normal", "quiet", "hold")
 
 
 class Announcer:
-    def __init__(self, ntfy_topic: str = "", speak: Callable[[str], None] | None = None):
+    def __init__(self, ntfy_topic: str = "", speak: Callable[[str], None] | None = None,
+                 state_file: Path | None = None, quiet_start: str = ""):
         self.ntfy_topic = ntfy_topic
         self.speak = speak
         self.telegram = None             # set by the runtime when Telegram is configured
         self.mode = "normal"
+        self.night = False               # in night mode: hold everything until the user wakes up
+        self.quiet_start = quiet_start   # "HH:MM" when night mode starts, "" = never
         self._ids = itertools.count(1)
         self._events: list[dict] = []
         self._held: list[str] = []
         self._lock = threading.Lock()
+        self._state_file = state_file
+        self._load()
+        if quiet_start:
+            threading.Thread(target=self._night_watch, daemon=True, name="jarvis-night").start()
 
     # -- what tools and jobs call ------------------------------------------------
 
     def announce(self, text: str, urgent: bool = False, quiet: bool = False) -> None:
         """Say something unprompted, e.g. a timer going off or a job finishing."""
-        if self.mode == "hold" and not urgent:
+        if (self.mode == "hold" or self.night) and not urgent:
             with self._lock:
-                self._held.append(text)
+                self._held.append(f"[{datetime.now():%H:%M}] {text}")
+            self._save()
             return
         silent = (quiet or self.mode == "quiet") and not urgent
         self._add({"type": "say", "text": text, "silent": silent})
@@ -64,13 +75,61 @@ class Announcer:
         if mode not in MODES:
             return f"Unknown mode {mode}; use one of {', '.join(MODES)}."
         self.mode = mode
+        self._save()
         return f"Delivery mode is now {mode}."
 
     def take_held(self) -> list[str]:
         """Everything kept while in hold mode (or that the user hasn't heard yet), then cleared."""
         with self._lock:
             held, self._held = self._held, []
+        self._save()
         return held
+
+    def peek_held(self) -> int:
+        return len(self._held)
+
+    # -- night mode (quiet hours) -------------------------------------------------
+
+    def start_night(self) -> None:
+        self.night = True
+        self._save()
+
+    def wake(self) -> bool:
+        """The user is up (alarm stopped, Sleep Focus off, or they talked to Jarvis).
+        Returns True if night mode was on."""
+        was_night, self.night = self.night, False
+        if was_night:
+            self._save()
+        return was_night
+
+    def _night_watch(self) -> None:
+        last_day = None
+        while True:
+            now = datetime.now()
+            if now.strftime("%H:%M") == self.quiet_start and last_day != now.date():
+                last_day = now.date()
+                self.start_night()
+            time.sleep(20)
+
+    # -- persistence (so held items survive a restart) -------------------------------
+
+    def _save(self) -> None:
+        if self._state_file is None:
+            return
+        with self._lock:
+            state = {"mode": self.mode, "night": self.night, "held": self._held}
+        self._state_file.write_text(json.dumps(state, indent=1))
+
+    def _load(self) -> None:
+        if self._state_file is None or not self._state_file.exists():
+            return
+        try:
+            state = json.loads(self._state_file.read_text())
+            self.mode = state.get("mode", "normal")
+            self.night = bool(state.get("night", False))
+            self._held = list(state.get("held", []))
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     # -- for the web app -------------------------------------------------------------
 

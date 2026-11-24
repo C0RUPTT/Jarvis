@@ -45,6 +45,7 @@ class Config:
     telegram_token: str        # from @BotFather
     telegram_user_id: str      # your numeric id (from @userinfobot); the bot ignores everyone else
     siri_budget: float         # seconds before a Siri request says "still working" and finishes later
+    quiet_start: str           # "HH:MM": night mode starts (holds everything until you wake up)
 
     unsafe_no_confirm: bool
 
@@ -83,6 +84,7 @@ class Config:
             telegram_token=os.getenv("JARVIS_TELEGRAM_TOKEN", ""),
             telegram_user_id=os.getenv("JARVIS_TELEGRAM_USER_ID", ""),
             siri_budget=float(os.getenv("JARVIS_SIRI_BUDGET", "7")),
+            quiet_start=os.getenv("JARVIS_QUIET_START", "23:00"),
             unsafe_no_confirm=_env_bool("JARVIS_UNSAFE_NO_CONFIRM"),
         )
 

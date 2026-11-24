@@ -112,6 +112,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             return PlainTextResponse(reply)
         return respond(rt.ask(text), heard=text, with_audio=bool(payload.get("audio", True)))
 
+    @app.post("/api/wake")
+    def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
+        """Called by the iPhone wake-up automation: ends night mode and returns the overnight summary
+        as plain text, ready for the Shortcut to speak."""
+        check(x_jarvis_token or payload.get("token"))
+        return PlainTextResponse(clean_for_speech(rt.morning()))
+
     @app.post("/api/reset")
     def reset(x_jarvis_token: str | None = Header(None)):
         check(x_jarvis_token)

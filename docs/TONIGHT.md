@@ -6,7 +6,7 @@ The goal is to prove the risky parts on your real iPhone before building more:
 3. The connection from phone to computer stays reliable.
 4. We measure how much Claude usage real use takes.
 
-This runs on your laptop tonight. Moving to the free Oracle server later is the same steps on a different computer.
+This runs on your **Kubuntu** laptop tonight. Moving to the free Oracle server later is the same steps on a different computer.
 
 **Done on your phone already?**
 - Telegram bot token and your user ID saved in Notes
@@ -31,7 +31,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-### Windows: open PowerShell and paste
+### Windows (only if you use Windows instead): open PowerShell and paste
 ```powershell
 winget install -e Python.Python.3.12 Git.Git Gyan.FFmpeg
 irm https://claude.ai/install.ps1 | iex
@@ -55,6 +55,8 @@ Open `.env` in a text editor (Kubuntu: `kate .env`; Windows: `notepad .env`) and
 JARVIS_USER_NAME=sir                       # or what you'd like to be called
 JARVIS_TELEGRAM_TOKEN=123456:ABC...        # from @BotFather (in your Notes)
 JARVIS_TELEGRAM_USER_ID=123456789          # from @userinfobot (in your Notes)
+JARVIS_ICLOUD_USER=you@icloud.com          # your Apple ID email
+JARVIS_ICLOUD_APP_PASSWORD=abcd-efgh-ijkl-mnop   # app-specific password (in your Notes)
 ```
 
 ## Step 3: First check (2 min)
@@ -111,6 +113,19 @@ Then on the iPhone:
 - **Tailscale app:** turn on **VPN On Demand** in its settings (if offered), so the connection comes back by itself.
 - **Action Button** (if you have one): Settings › Action Button › Shortcut › **Jarvis**.
 - **Settings › Notifications › Announce Notifications:** turn on, then allow **Telegram**. Siri then reads Jarvis's messages through your AirPods.
+- **"Hey Jarvis" (iOS 18):** Settings › Accessibility › **Vocal Shortcuts** › Set Up, choose the
+  **Jarvis** Shortcut and say "Hey Jarvis" three times when asked. This works best with the phone
+  unlocked; with it locked, use "Siri, Jarvis" or the Action Button.
+
+### The wake-up automation (ends night mode and reads you the overnight summary)
+Night mode starts at 11pm. To end it when you get up, in **Shortcuts › Automation › +**:
+1. Choose **Alarm** › **Is Stopped** (your wake-up alarm). Pick **Run Immediately**.
+2. Add **Get Contents of URL**: your Siri URL, but ending in `/api/wake` instead of
+   `/api/ask?format=text`. Method **POST**, with the same `X-Jarvis-Token` header.
+3. Add **Speak Text** › *Contents of URL*.
+
+If you don't use an alarm, choose **Sleep** › **Wake Up** (Sleep Focus turning off), or any
+automation you like. Simply talking to Jarvis after 4am also ends night mode.
 
 ## Step 8: The phase 0 tests (15 min)
 
@@ -126,6 +141,8 @@ Lock the phone, then do each test:
 | 6 | Follow-up: "Make the dice roller dark mode" | A new job that changes the same app |
 | 7 | Telegram voice note: "What's the weather tomorrow?" | A voice reply |
 | 8 | Turn Wi-Fi off (mobile data only) and repeat test 1 | Still works away from home Wi-Fi |
+| 9 | "Siri, Jarvis" … "What's on my calendar this week?" | Your real Apple Calendar events |
+| 10 | "Add lunch with Sam tomorrow at noon to my calendar" | Appears in the iPhone Calendar app |
 
 Then on the laptop:
 ```bash
@@ -143,6 +160,13 @@ python -m jarvis stats
 3. Save the **token** it gives you.
 4. Then message **@userinfobot** and save your **Id**.
 5. Open your bot and tap **Start**.
+
+**Apple Calendar password:**
+1. In Safari, go to **account.apple.com** and sign in.
+2. Open **Sign-In and Security › App-Specific Passwords**, tap **+** and name it "Jarvis".
+3. Save the password it shows (like `abcd-efgh-ijkl-mnop`) in Notes.
+
+This password only works for calendar-style access, not your full Apple account. You can revoke it at any time on the same page.
 
 **Tailscale:** install it from the App Store and sign in with the same account you'll use on the laptop.
 

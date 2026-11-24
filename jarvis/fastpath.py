@@ -63,7 +63,9 @@ def _missed(rt) -> str:
         parts.append(running)
     if not parts:
         parts.append("Nothing new.")
-    if rt.announcer.mode != "normal":
+    if rt.announcer.night:
+        parts.append("Night mode is on until you wake up.")
+    elif rt.announcer.mode != "normal":
         parts.append(f"I'm still in {rt.announcer.mode} mode; say 'back to normal' to change that.")
     return " ".join(parts)
 
