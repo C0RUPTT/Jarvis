@@ -10,14 +10,29 @@ SAMPLE_RATE = 16_000
 FRAME = 1280  # 80 ms at 16 kHz - the frame size openWakeWord expects
 
 
-class Listener:
-    def __init__(self, whisper_model: str = "base.en", wake_threshold: float = 0.5,
-                 use_wake_word: bool = True):
-        import sounddevice  # noqa: F401 - fail early with a clear error if missing
+class Transcriber:
+    """Speech-to-text with Whisper, running locally (free, private, works offline)."""
+
+    def __init__(self, whisper_model: str = "base.en"):
         from faster_whisper import WhisperModel
 
         print(f"[voice] Loading speech recognition model '{whisper_model}'...")
         self.whisper = WhisperModel(whisper_model, device="auto", compute_type="int8")
+
+    def transcribe(self, audio) -> str:
+        """audio: a numpy int16 array at 16 kHz, or a path / file object (any format ffmpeg reads)."""
+        if isinstance(audio, np.ndarray):
+            audio = audio.astype(np.float32) / 32768.0
+        segments, _ = self.whisper.transcribe(audio, language="en", beam_size=1, vad_filter=True)
+        return " ".join(s.text.strip() for s in segments).strip()
+
+
+class Listener:
+    def __init__(self, whisper_model: str = "base.en", wake_threshold: float = 0.5,
+                 use_wake_word: bool = True):
+        import sounddevice  # noqa: F401 - fail early with a clear error if missing
+
+        self.transcriber = Transcriber(whisper_model)
         self.wake_threshold = wake_threshold
         self.wake_model = None
         if use_wake_word:
@@ -99,9 +114,7 @@ class Listener:
         return np.concatenate(frames)
 
     def transcribe(self, audio: np.ndarray) -> str:
-        samples = audio.astype(np.float32) / 32768.0
-        segments, _ = self.whisper.transcribe(samples, language="en", beam_size=1, vad_filter=True)
-        return " ".join(s.text.strip() for s in segments).strip()
+        return self.transcriber.transcribe(audio)
 
     def listen(self, start_timeout: float = 8.0) -> str:
         audio = self.record_utterance(start_timeout=start_timeout)

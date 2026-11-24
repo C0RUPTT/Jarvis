@@ -1,16 +1,25 @@
-# Brain
+# Brain (default: Claude Code on this laptop, using your Claude Pro/Max plan - install it separately,
+# see docs/PHONE_SETUP.md). The anthropic package is only used if JARVIS_BRAIN=api.
 anthropic>=2.13.0
+mcp>=2.3,<3
 python-dotenv>=1.0
 
-# Voice (wake word, speech-to-text, text-to-speech)
+# Phone server
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9
+edge-tts>=7.0          # free natural-sounding voice for the phone (needs internet)
+
+# Voice (speech-to-text runs locally; wake word + speakers for laptop voice mode)
 numpy>=1.26
-sounddevice>=0.4.6
 faster-whisper>=1.2
+sounddevice>=0.4.6
 openwakeword>=0.6
 pyttsx3>=2.98
 
-# Extras for computer control
+# Computer control
 psutil>=5.9
 mss>=9.0
 pillow>=10.0
 pyperclip>=1.8
+pyautogui>=0.9.54

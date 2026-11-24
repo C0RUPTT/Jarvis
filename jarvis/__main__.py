@@ -1,7 +1,8 @@
 """Run Jarvis.
 
-    python -m jarvis            # voice mode: say "Hey Jarvis", then talk
-    python -m jarvis --ptt      # voice mode, press Enter to talk instead of the wake word
+    python -m jarvis serve      # phone mode: talk to Jarvis from your iPhone (docs/PHONE_SETUP.md)
+    python -m jarvis            # laptop voice mode: say "Hey Jarvis", then talk
+    python -m jarvis --ptt      # laptop voice mode, press Enter to talk instead of the wake word
     python -m jarvis --text     # type instead of talking (handy for testing)
 """
 
@@ -11,7 +12,8 @@ import argparse
 import re
 import sys
 
-from .brain import Brain
+from .announcer import Announcer
+from .brain import make_brain
 from .config import Config
 from .tools import Context
 
@@ -25,11 +27,10 @@ def run_text(config: Config) -> None:
         answer = input(f"JARVIS: {question} [y/N] ").strip().lower()
         return answer in {"y", "yes"} or YES.search(answer) is not None
 
-    def announce(text: str) -> None:
-        print(f"\nJARVIS: {text}\nYou: ", end="", flush=True)
-
-    ctx = Context(config=config, confirm=confirm_text, announce=announce)
-    brain = Brain(ctx, on_interim=lambda t: print(f"JARVIS: {t}"))
+    announcer = Announcer(config.ntfy_topic, speak=lambda t: print(f"\nJARVIS: {t}\nYou: ", end="", flush=True))
+    ctx = Context(config=config, confirm=confirm_text, announce=announcer.announce,
+                  extras={"announcer": announcer})
+    brain = make_brain(ctx, on_interim=lambda t: print(f"JARVIS: {t}"))
     print(f"JARVIS: At your service, {config.user_name}. (type 'exit' to quit, 'reset' for a new conversation)")
     while True:
         try:
@@ -40,6 +41,7 @@ def run_text(config: Config) -> None:
         if not text:
             continue
         if text.lower() in {"exit", "quit"}:
+            brain.close()
             break
         if text.lower() in {"reset", "new conversation"}:
             brain.reset()
@@ -61,8 +63,10 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
         print(f"You: {answer}")
         return YES.search(answer) is not None
 
-    ctx = Context(config=config, confirm=confirm, announce=lambda t: speaker.say(t, wait=False))
-    brain = Brain(ctx, on_interim=lambda t: speaker.say(t))
+    announcer = Announcer(config.ntfy_topic, speak=lambda t: speaker.say(t, wait=False))
+    ctx = Context(config=config, confirm=confirm, announce=announcer.announce,
+                  extras={"announcer": announcer})
+    brain = make_brain(ctx, on_interim=lambda t: speaker.say(t))
 
     wake = listener.has_wake_word
     speaker.say(f"Jarvis online. {'Say Hey Jarvis' if wake else 'Press Enter'} when you need me, {config.user_name}.")
@@ -86,6 +90,7 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
                 print(f"You: {text}")
                 if EXIT.search(text) and len(text.split()) <= 6:
                     speaker.say(f"Very good, {config.user_name}. Powering down.")
+                    brain.close()
                     return
                 if RESET.search(text) and len(text.split()) <= 6:
                     brain.reset()
@@ -96,16 +101,27 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
         except KeyboardInterrupt:
             print()
             speaker.say("Shutting down.")
+            brain.close()
             return
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis", description="A voice assistant powered by Claude.")
+    parser.add_argument("mode", nargs="?", choices=["serve"], help="'serve' runs the phone server")
+    parser.add_argument("--speak-on-laptop", action="store_true",
+                        help="with serve: also say timers/reminders out loud on the laptop")
     parser.add_argument("--text", action="store_true", help="type instead of speaking")
     parser.add_argument("--ptt", action="store_true", help="push-to-talk (Enter) instead of the wake word")
     args = parser.parse_args()
 
     config = Config.load()
+    if args.mode == "serve":
+        try:
+            from .server import serve
+        except ImportError as e:
+            sys.exit(f"Phone mode needs extra packages ({e}). Run: pip install -r requirements.txt")
+        serve(config, speak_on_laptop=args.speak_on_laptop)
+        return
     if args.text:
         run_text(config)
         return

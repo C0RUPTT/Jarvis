@@ -39,7 +39,7 @@ def _schedule(ctx, when: datetime, message: str) -> int:
 def set_timer(ctx, seconds: int, message: str):
     when = datetime.now() + timedelta(seconds=seconds)
     timer_id = _schedule(ctx, when, message)
-    return f"Timer #{timer_id} set for {when:%H:%M:%S}."
+    return f"Timer #{timer_id} set: it goes off in {seconds} seconds (at {when:%H:%M:%S})."
 
 
 @tool(

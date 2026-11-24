@@ -21,6 +21,30 @@ def clean_for_speech(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def synthesize_mp3(text: str, voice: str) -> bytes | None:
+    """Turn text into MP3 audio with a free Microsoft neural voice (edge-tts, needs internet).
+    Returns None if unavailable, and the phone falls back to its own built-in voice."""
+    text = clean_for_speech(text)
+    if not voice or not text:
+        return None
+    try:
+        import asyncio
+
+        import edge_tts
+
+        async def run() -> bytes:
+            audio = bytearray()
+            async for chunk in edge_tts.Communicate(text, voice).stream():
+                if chunk["type"] == "audio":
+                    audio.extend(chunk["data"])
+            return bytes(audio)
+
+        return asyncio.run(run()) or None
+    except Exception as e:  # noqa: BLE001
+        print(f"[tts] online voice unavailable ({e}); the phone will use its own voice.")
+        return None
+
+
 class Speaker:
     """Speaks text on a background thread so timers can talk at any moment."""
 

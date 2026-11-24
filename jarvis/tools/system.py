@@ -14,6 +14,9 @@ from . import tool
 
 SYSTEM = platform.system()  # "Windows", "Darwin" (macOS) or "Linux"
 
+# Screen pixels per screenshot pixel, so mouse_click can use screenshot coordinates.
+LAST_SCREENSHOT_SCALE = 1.0
+
 
 @tool(
     "open_application",
@@ -108,19 +111,24 @@ def system_status(ctx):
     "Use when the user says things like 'what's on my screen', 'read this', 'help me with this'.",
 )
 def look_at_screen(ctx):
+    global LAST_SCREENSHOT_SCALE
     import mss
     from PIL import Image
 
     with mss.mss() as sct:
         shot = sct.grab(sct.monitors[1])  # primary monitor
         img = Image.frombytes("RGB", shot.size, shot.rgb)
+    screen_w, screen_h = img.size
     img.thumbnail((1568, 1568))  # keep the image a sensible size for the API
+    LAST_SCREENSHOT_SCALE = screen_w / img.size[0]
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=80)
     data = base64.standard_b64encode(buf.getvalue()).decode()
     return [
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}},
-        {"type": "text", "text": "Screenshot of the user's primary monitor."},
+        {"type": "text", "text": f"Screenshot of the user's primary monitor ({screen_w}x{screen_h}), "
+                                 f"shown at {img.size[0]}x{img.size[1]}. Use these image coordinates "
+                                 "with mouse_click."},
     ]
 
 
