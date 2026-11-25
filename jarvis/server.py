@@ -271,6 +271,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         print(f"\nYou (phone): {heard!r}")
         if len(heard.strip(" .!?,")) < 2:
             return {"heard": "", "reply": "", "speech": "", "audio": None}
+        if _echo_of_jarvis(heard):   # Jarvis's own voice picked up by the mic: never a request
+            print(f"[web] ignored Jarvis's own words: {heard!r}")
+            return {"heard": "", "reply": "", "speech": "", "audio": None}
         if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
             return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
         queued_at = time.monotonic()
@@ -296,6 +299,15 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         speech_id = _start_speech(parts) if parts else ""
         return {"heard": heard, "reply": reply, "speech": clean_for_speech(spoken_reply), "audio": None,
                 "speech_id": speech_id, "speech_parts": parts}
+
+    def _echo_of_jarvis(heard: str) -> bool:
+        """True if what the mic 'heard' is just a piece of Jarvis's last answer (it spoke on the
+        loudspeaker and the mic caught it), e.g. after interrupting it by talking."""
+        if not rt.recent or time.time() - rt.recent[-1]["time"] > 120:
+            return False
+        norm = lambda x: " ".join(re.sub(r"[^a-z0-9 ]", " ", x.lower()).split())   # noqa: E731
+        said, last = norm(heard), norm(rt.recent[-1]["jarvis"])
+        return len(said.split()) >= 3 and said in last
 
     def _speech_parts(text: str) -> list[str]:
         sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]

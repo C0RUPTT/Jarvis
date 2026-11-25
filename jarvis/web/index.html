@@ -320,6 +320,7 @@
   }
 
   function speak(data) {
+    watchForBargeIn();
     return new Promise((resolve) => {
       if (data.speech_id && data.speech_parts?.length) {
         speakParts(data).then(resolve);
@@ -342,7 +343,46 @@
     setTimeout(finish, 4000 + text.length * 90);   // iPhone sometimes never reports the end
     speechSynthesis.speak(u);
   }
+  // ---------- interrupting Jarvis by talking (barge-in) ----------
+  // While Jarvis speaks, the mic only measures loudness (nothing is recorded or sent). If you talk
+  // over it, the voice stops and what you say becomes the next request. On the phone's own speaker
+  // Jarvis's voice comes back into the mic, so by default this is on only with headphones/AirPods
+  // (detected from the mic's name); tap the orb to interrupt anywhere. Type "voice interrupt on",
+  // "off" or "auto" in the text box to change it.
+  let bargedIn = false, bargeTimer = null;
+  const HEADPHONES = /airpods|headphone|headset|bluetooth|beats|buds|earbud|earphone|wired/i;
+  function bargeInMode() {
+    const pref = safeGet("jarvis-bargein") || "auto";
+    if (pref === "off" || useSR || !stream || !analyser) return "";
+    const label = stream.getAudioTracks()[0]?.label || "";
+    if (HEADPHONES.test(label)) return "headphones";
+    return pref === "on" ? "speaker" : "";
+  }
+  function watchForBargeIn() {
+    stopBargeWatch();
+    const mode = conversation ? bargeInMode() : "";
+    if (!mode) return;
+    const buf = new Float32Array(analyser.fftSize), started = performance.now();
+    let echo = 0, loudFor = 0;
+    bargeTimer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      const rms = Math.sqrt(sum / buf.length), t = performance.now() - started;
+      if (t < 600) { echo = Math.max(echo, rms); return; }   // learn how loud Jarvis's own voice comes back
+      const threshold = mode === "headphones" ? Math.max(noiseFloor * 4, 0.03, echo * 2.5)
+                                              : Math.max(0.08, echo * 3.5);
+      loudFor = rms > threshold ? loudFor + 50 : 0;
+      if (loudFor >= 300) {            // 0.3 s of clear talking over Jarvis: stop and listen
+        stopBargeWatch(); bargedIn = true;
+        diag("barge-in", { mode, level: +rms.toFixed(3), echo: +echo.toFixed(3) });
+        stopSpeaking();
+      }
+    }, 50);
+  }
+  function stopBargeWatch() { clearInterval(bargeTimer); bargeTimer = null; }
+
   function stopSpeaking() {
+    stopBargeWatch();
     speechRun++;
     player.pause(); player.onended && player.onended();
     if ("speechSynthesis" in window) speechSynthesis.cancel();
@@ -543,7 +583,11 @@
     setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
-    const calibrateUntil = performance.now() + 400;
+    let calibrateUntil = performance.now() + 400;
+    if (bargedIn) {   // you interrupted Jarvis: you're already talking, so record straight away
+      bargedIn = false; calibrateUntil = 0;
+      speechStart = lastLoud = performance.now(); userTalking = true;
+    }
     let peak = 0;
     const levelLog = setInterval(() => {   // input levels, for /logs
       if (!vadTimer) return clearInterval(levelLog);
@@ -660,7 +704,8 @@
     if (!data.reply) return;
     setState("speaking");
     await speak(data);
-    await new Promise(r => setTimeout(r, 350));   // on the loudspeaker, iPhone needs a moment to hand the mic back
+    stopBargeWatch();
+    if (!bargedIn) await new Promise(r => setTimeout(r, 350));   // on the loudspeaker, iPhone needs a moment to hand the mic back
   }
 
   // ---------- conversation control ----------
@@ -760,6 +805,11 @@
   $("chat").onsubmit = async (e) => {
     e.preventDefault();
     const text = $("text").value.trim(); if (!text) return;
+    if (/^voice interrupt (on|off|auto)$/i.test(text)) {
+      const v = text.split(" ").pop().toLowerCase(); safeSet("jarvis-bargein", v); $("text").value = "";
+      add("sys", { on: "Talking over Jarvis interrupts it, on the speaker too.", off: "Interrupt by tapping only.",
+        auto: "Talking over Jarvis interrupts it when you're on headphones or AirPods." }[v]); return;
+    }
     if (/^(phone|server) listening$/i.test(text)) {
       const phone = /^phone/i.test(text); safeSet("jarvis-stt", phone ? "phone" : "server"); useSR = phone && !!SR;
       $("text").value = ""; add("sys", phone ? "Listening with the iPhone's own recognition." : "Listening by recording (default)."); return;
