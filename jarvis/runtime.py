@@ -109,14 +109,58 @@ class Runtime:
         self.announcer.wake()
         parts = [f"Good morning, {self.config.user_name}."]
         held = self.announcer.take_held()
+        weather = self._weather_line()
+        if weather:
+            parts.append(weather)
         parts.append(("Overnight: " + " ".join(held)) if held else "Nothing came in overnight.")
         parts.append(self._today_calendar())
+        parts.append(self._today_reminders())
+        parts.append(self._watchers_line())
         from . import fastpath
 
         running = fastpath._running_jobs(self)
         if running:
             parts.append(running)
         return " ".join(p for p in parts if p)
+
+    def _weather_line(self) -> str:
+        city = os.getenv("JARVIS_CITY", "")
+        if not city:
+            return ""
+        try:
+            from .tools.weather import get_weather
+
+            report = get_weather(self.ctx, city, fahrenheit=os.getenv("JARVIS_UNITS", "imperial") != "metric")
+            today = report.splitlines()[0]
+            first = report.splitlines()[1] if len(report.splitlines()) > 1 else ""
+            # "Dallas, United States: partly cloudy, 61°F (feels like 59°F)..." -> spoken summary
+            now = today.split(": ", 1)[-1].split(", humidity")[0]
+            hi_lo = first.split(": ", 1)[-1] if first else ""
+            return f"Weather: {now}. Today: {hi_lo}."
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _today_reminders(self) -> str:
+        try:
+            from .tools.reminders import _load
+
+            today = datetime.now().astimezone().date()
+            items = [r for r in _load(self.ctx) if r.get("at") and datetime.fromisoformat(r["at"]).date() == today]
+        except Exception:  # noqa: BLE001
+            return ""
+        if not items:
+            return ""
+        spoken = "; ".join(f"{datetime.fromisoformat(r['at']):%I:%M %p}".lstrip("0") + f" {r['text']}" for r in items)
+        return f"Reminders today: {spoken}."
+
+    def _watchers_line(self) -> str:
+        try:
+            from .tools.watchers import _load
+
+            active = [w for w in _load(self.ctx) if w["active"]]
+        except Exception:  # noqa: BLE001
+            return ""
+        return f"I'm still watching {len(active)} thing{'s' if len(active) != 1 else ''} for you." if active else ""
 
     def _today_calendar(self) -> str:
         import os
@@ -186,6 +230,10 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
                          config.cc_permission_mode, on_finished=job_finished)
         ctx.extras["jobs"] = jobs
 
+    from .tools import reminders, watchers
+
+    reminders.start(ctx)
+    watchers.start(ctx)
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
 

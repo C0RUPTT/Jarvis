@@ -6,6 +6,7 @@
     /logs     the last lines of Jarvis's log
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
+    /city     your city for the morning weather, e.g. /city Dallas
     /notifysetup  public link so Claude Code can tell Jarvis when it's done
     /github <key> connect your GitHub so Jarvis can work on your projects
     /textsetup    spoken alerts by text message (see docs/SPOKEN_TEXTS.md); /texttest, /textalt, /textoff
@@ -240,6 +241,20 @@ def notify_setup(config) -> str:
     )
 
 
+def set_env_value(key: str, value: str) -> None:
+    env = ROOT / ".env"
+    lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith(key + "=")]
+    env.write_text("\n".join(lines + [f"{key}={value}"]) + "\n")
+    os.environ[key] = value
+
+
+def set_city(arg: str = "") -> str:
+    if not arg:
+        return f"Current city: {os.getenv('JARVIS_CITY') or 'not set'}. Set it with /city Dallas"
+    set_env_value("JARVIS_CITY", arg.strip())
+    return f"Got it. Your morning briefing will include the weather for {arg.strip()}."
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
@@ -248,6 +263,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
+        "city": set_city,
         "notifysetup": lambda: notify_setup(config),
         "github": lambda arg="": __import__("jarvis.github", fromlist=["x"]).save_token(arg, ROOT / ".env")
                   if arg else "Send it like this: /github github_pat_... (see docs/GITHUB.md for how to make one).",

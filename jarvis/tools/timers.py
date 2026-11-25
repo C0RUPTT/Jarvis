@@ -1,4 +1,4 @@
-"""Timers and reminders that Jarvis announces out loud when they go off."""
+"""Short countdown timers that Jarvis announces when they go off (reminders live in reminders.py)."""
 
 from __future__ import annotations
 
@@ -42,25 +42,7 @@ def set_timer(ctx, seconds: int, message: str):
     return f"Timer #{timer_id} set: it goes off in {seconds} seconds (at {when:%H:%M:%S})."
 
 
-@tool(
-    "set_reminder",
-    "Set a reminder for a specific local date/time. Jarvis says the message out loud then. "
-    "Only works while Jarvis is running.",
-    {
-        "when": {"type": "string", "description": "ISO local datetime, e.g. 2026-11-24T17:30:00"},
-        "message": {"type": "string"},
-    },
-    ["when", "message"],
-)
-def set_reminder(ctx, when: str, message: str):
-    at = datetime.fromisoformat(when)
-    if at < datetime.now():
-        return "That time is in the past."
-    timer_id = _schedule(ctx, at, message)
-    return f"Reminder #{timer_id} set for {at:%A %H:%M}."
-
-
-@tool("list_timers", "List active timers and reminders.")
+@tool("list_timers", "List active countdown timers (for reminders, use list_reminders).")
 def list_timers(ctx):
     if not _active:
         return "No active timers or reminders."

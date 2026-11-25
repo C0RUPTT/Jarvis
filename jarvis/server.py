@@ -202,6 +202,23 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         check(x_jarvis_token or token or payload.get("token"))
         return PlainTextResponse(clean_for_speech(rt.morning()))
 
+    @app.post("/api/event")
+    def phone_event(name: str = Query(...), payload: dict = Body(default={}),
+                    x_jarvis_token: str | None = Header(None), token: str | None = Query(None)):
+        """The iPhone tells Jarvis something happened (arrive_home, leave_home, car, ...) via a
+        Shortcuts automation. Returns what to say, so the automation can speak it."""
+        check(x_jarvis_token or token or payload.get("token"))
+        from .tools.reminders import EVENTS, fire_event
+
+        if name not in EVENTS:
+            raise HTTPException(status_code=400, detail=f"Unknown event; use one of {', '.join(EVENTS)}")
+        texts = fire_event(rt.ctx, name)
+        greeting = {"arrive_home": f"Welcome home, {config.user_name}."}.get(name, "")
+        say = " ".join([greeting] + [f"Reminder: {t}" for t in texts]).strip()
+        for t in texts:   # also to Telegram, in case the phone can't speak right now
+            announcer.push(f"Reminder: {t}")
+        return PlainTextResponse(clean_for_speech(say))
+
     @app.post("/api/notify")
     def notify(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
                token: str | None = Query(None), label: str = Query("")):
