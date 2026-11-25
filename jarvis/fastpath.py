@@ -14,7 +14,7 @@ _PATTERNS = [
     ("claude_always", r"^(always|every time)?\s*(tell|let) me (know )?(every time|whenever|each time) claude( code)? (is done|finishes|is finished)|^always (tell|let) me (know )?when claude( code)? (is done|finishes|is finished)"),
     ("claude_once", r"^(please )?(tell|let) me (know )?when claude( code)?('s| is)? (done|finished|finishes)|^(ping|notify) me when claude( code)? (is done|finishes)"),
     ("claude_off", r"^(stop|don'?t) (telling|tell|notifying|notify) me (about|when) claude"),
-    ("update", r"^(please )?(update yourself|update jarvis|check for updates|install (the )?updates|get the latest( version)?)$"),
+    ("update", r"^(please |go |can you |could you )?(update yourself|update jarvis|update|check for updates|install (the )?updates?|get the latest( version)?|upgrade yourself)( now| please)?$"),
     ("morning", r"^(hey |hi |ok(ay)? )?(good )?morning( jarvis)?$|^i'?m (up|awake)( now)?$|^(start|begin) my day$"),
     ("hold", r"^(please )?(hold (everything|it all|all|my (messages|notifications|stuff))|"
              r"don'?t (bother|disturb|interrupt) me|do not disturb|hold (on to )?everything)"),
@@ -107,12 +107,25 @@ def _morning(rt) -> str:
 
 
 def _update(rt) -> str:
+    """Answer straight away (Siri only waits ~10s); update in the background; the restarted Jarvis
+    reports what's new (see runtime.build -> report_update)."""
+    import threading
+
     from . import admin
 
     if not admin.update_available():
-        return "I'm already on the latest version."
-    result = admin.update()
-    return result.split("\n")[0] if result.startswith("Updated") else result
+        return "I'm already on the latest version, sir."
+
+    def run():
+        result = admin.update()
+        if result.startswith("Updated"):
+            admin.UPDATE_NOTE.parent.mkdir(parents=True, exist_ok=True)
+            admin.UPDATE_NOTE.write_text(result.split("What's new:", 1)[-1].strip())
+        else:
+            rt.announcer.announce(result, reply=True)   # e.g. rolled back after failed checks
+
+    threading.Thread(target=run, daemon=True).start()
+    return "Updating now, sir. I'll be back in about a minute and I'll message you what's new."
 
 
 def _claude_once(rt) -> str:

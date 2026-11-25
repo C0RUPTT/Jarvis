@@ -276,6 +276,7 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
             announcer.telegram = bot
             bot.start()
             rt.telegram = bot
+            admin.report_update(lambda text: announcer.announce(text, reply=True))
         except RuntimeError as e:
             print(f"[telegram] not started: {e}")
     return rt

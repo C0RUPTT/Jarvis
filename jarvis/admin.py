@@ -77,6 +77,15 @@ def _head() -> str:
 
 
 FAILED_FILE = Path.home() / ".jarvis" / "failed-update"
+UPDATE_NOTE = Path.home() / ".jarvis" / "just-updated"   # written before restarting; read after
+
+
+def report_update(announce) -> None:
+    """After restarting from an update: tell the user what's new (once)."""
+    if UPDATE_NOTE.exists():
+        changes = UPDATE_NOTE.read_text().strip()
+        UPDATE_NOTE.unlink(missing_ok=True)
+        announce("I'm back and updated, sir." + (f" What's new:\n{changes[:1500]}" if changes else ""))
 
 
 def _upstream() -> str:
@@ -137,8 +146,8 @@ def auto_update_loop(rt, every_minutes: int = 15) -> None:
                 if update_available() and not busy():
                     result = update()
                     if result.startswith("Updated"):
-                        rt.announcer.announce("I've updated myself. " + result.split("\n", 1)[-1], quiet=True,
-                                              reply=True)
+                        UPDATE_NOTE.parent.mkdir(parents=True, exist_ok=True)
+                        UPDATE_NOTE.write_text(result.split("What's new:", 1)[-1].strip())
                     elif "rolled back" in result:
                         rt.announcer.announce(result, reply=True)
             except Exception as e:  # noqa: BLE001 - never let the updater take Jarvis down
