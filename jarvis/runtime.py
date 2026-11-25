@@ -3,9 +3,11 @@ Shared by every mode (phone server, terminal, laptop voice)."""
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 from . import metrics
@@ -151,6 +153,8 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
             "hold": lambda: announcer.set_mode("hold"),
             "normal": lambda: announcer.set_mode("normal"),
         }
+        if os.getenv("JARVIS_AUTO_UPDATE", "1") != "0" and (Path(__file__).parent.parent / ".git").exists():
+            admin.auto_update_loop(rt)
         try:
             print(f"[telegram] connected as @{bot.check()}")
             announcer.telegram = bot

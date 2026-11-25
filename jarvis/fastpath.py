@@ -11,6 +11,7 @@ import re
 MAX_WORDS = 9
 
 _PATTERNS = [
+    ("update", r"^(please )?(update yourself|update jarvis|check for updates|install (the )?updates|get the latest( version)?)$"),
     ("morning", r"^(hey |hi |ok(ay)? )?(good )?morning( jarvis)?$|^i'?m (up|awake)( now)?$|^(start|begin) my day$"),
     ("hold", r"^(please )?(hold (everything|it all|all|my (messages|notifications|stuff))|"
              r"don'?t (bother|disturb|interrupt) me|do not disturb|hold (on to )?everything)"),
@@ -102,4 +103,13 @@ def _morning(rt) -> str:
     return rt.morning()
 
 
-_ACTIONS = {"morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}
+def _update(rt) -> str:
+    from . import admin
+
+    if not admin.update_available():
+        return "I'm already on the latest version."
+    result = admin.update()
+    return result.split("\n")[0] if result.startswith("Updated") else result
+
+
+_ACTIONS = {"update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}

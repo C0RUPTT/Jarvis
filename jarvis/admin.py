@@ -62,18 +62,65 @@ def status(config, jobs) -> str:
     return "Jarvis status\n" + "\n".join(lines)
 
 
+def _head() -> str:
+    return _run(["git", "rev-parse", "HEAD"], timeout=10)[1].strip()
+
+
+def update_available() -> bool:
+    code, _ = _run(["git", "fetch", "-q", "origin"], timeout=60)
+    if code != 0:
+        return False
+    code, out = _run(["git", "rev-list", "--count", "HEAD..@{u}"], timeout=10)
+    return code == 0 and out.strip().isdigit() and int(out.strip()) > 0
+
+
 def update() -> str:
+    """Pull the latest code, install packages, check it imports cleanly, then restart.
+    If the new code is broken, roll back to the previous version and say so."""
+    before = _head()
     code, out = _run(["git", "pull", "--ff-only"], timeout=120)
     if code != 0:
         return f"Update failed at git pull:\n{out[-800:]}"
     if "Already up to date" in out:
         return "Already up to date."
+    _, changes = _run(["git", "log", "--format=- %s", f"{before}..HEAD"], timeout=10)
     reqs = ROOT / ("requirements-server.txt" if (ROOT / "requirements-server.txt").exists() else "requirements.txt")
     code, pip_out = _run([sys.executable, "-m", "pip", "install", "-q", "-r", str(reqs)], timeout=900)
+    if code == 0:   # smoke test: the new code must at least import
+        code, pip_out = _run([sys.executable, "-c", "import jarvis.server, jarvis.runtime, jarvis.telegram"],
+                             timeout=120)
     if code != 0:
-        return f"Code updated, but installing packages failed:\n{pip_out[-800:]}"
+        _run(["git", "reset", "--hard", before], timeout=30)
+        return f"The update failed its checks, so I rolled back to the previous version.\n{pip_out[-600:]}"
     _restart_soon()
-    return "Updated. Restarting now; I'll be back in about 10 seconds."
+    return f"Updated. Restarting now; back in about 10 seconds.\nWhat's new:\n{changes[:1500]}"
+
+
+def auto_update_loop(rt, every_minutes: int = 15) -> None:
+    """Check for new code regularly and install it when Jarvis is idle."""
+    def busy() -> bool:
+        lock = getattr(rt.brain, "lock", None)
+        if lock is not None and lock.locked():
+            return True
+        jobs = rt.jobs.jobs.values() if rt.jobs is not None else []
+        return any(j.status == "running" for j in jobs)
+
+    def loop():
+        time.sleep(120)   # let startup finish
+        while True:
+            try:
+                if update_available() and not busy():
+                    result = update()
+                    if result.startswith("Updated"):
+                        rt.announcer.announce("I've updated myself. " + result.split("\n", 1)[-1], quiet=True,
+                                              reply=True)
+                    elif "rolled back" in result:
+                        rt.announcer.announce(result, reply=True)
+            except Exception as e:  # noqa: BLE001 - never let the updater take Jarvis down
+                print(f"[auto-update] {e}")
+            time.sleep(every_minutes * 60)
+
+    threading.Thread(target=loop, daemon=True, name="jarvis-autoupdate").start()
 
 
 def logs() -> str:
