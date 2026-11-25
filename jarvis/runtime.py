@@ -241,6 +241,9 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
 
     reminders.start(ctx)
     watchers.start(ctx)
+    from . import backup
+
+    backup.start_nightly(config, announcer.announce)
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
 

@@ -7,6 +7,8 @@
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
     /city     your city for the morning weather, e.g. /city Dallas
+    /backup   back up memory, reminders and projects to your private GitHub now (also nightly)
+    /restore  bring a backup back onto a new server
     /notifysetup  public link so Claude Code can tell Jarvis when it's done
     /github <key> connect your GitHub so Jarvis can work on your projects
     /textsetup    spoken alerts by text message (see docs/SPOKEN_TEXTS.md); /texttest, /textalt, /textoff
@@ -284,6 +286,8 @@ def commands(config, jobs, brain=None) -> dict:
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
         "city": set_city,
+        "backup": lambda: __import__("jarvis.backup", fromlist=["x"]).backup_now(config),
+        "restore": lambda: __import__("jarvis.backup", fromlist=["x"]).restore(config),
         "notifysetup": lambda: notify_setup(config),
         "github": lambda arg="": __import__("jarvis.github", fromlist=["x"]).save_token(arg, ROOT / ".env")
                   if arg else "Send it like this: /github github_pat_... (see docs/GITHUB.md for how to make one).",
