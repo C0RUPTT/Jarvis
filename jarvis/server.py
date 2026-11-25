@@ -117,9 +117,16 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             [(time.time(), p["q"]) for p in ready]
         return [_late_text(p) for p in ready]
 
+    wait_state = {"last": 0.0}   # when Siri's waiting step last asked for an answer
+
     def _notify_if_unclaimed(item: dict) -> None:
         """The conversation may have ended: if nobody picked the answer up in time, send it to Telegram."""
         def later():
+            # Siri's waiting step is still collecting answers: give it longer before Telegram.
+            if time.time() - wait_state["last"] < 15 and item.get("postponed", 0) < 4:
+                item["postponed"] = item.get("postponed", 0) + 1
+                threading.Timer(10, later).start()
+                return
             with pending_lock:
                 if item["delivered"]:
                     return
@@ -419,9 +426,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if it's still not ready."""
         payload = payload or {}
         check(x_jarvis_token or token or payload.get("token"))
-        rt.last_siri = time.time()
+        rt.last_siri = wait_state["last"] = time.time()
         print("[siri] waiting for a late answer...")
-        deadline = time.time() + config.siri_budget
+        # Shorter than a normal turn: this call comes right after Siri spoke "One moment", and
+        # Siri gives up on a step that takes ~10 seconds.
+        deadline = time.time() + min(config.siri_budget, 6)
         while time.time() < deadline:
             ready = _take_finished() + rt.take_siri_inbox()
             if ready:
