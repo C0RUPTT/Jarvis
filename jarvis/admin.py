@@ -116,8 +116,7 @@ def update() -> str:
     reqs = ROOT / ("requirements-server.txt" if (ROOT / "requirements-server.txt").exists() else "requirements.txt")
     code, pip_out = _run([sys.executable, "-m", "pip", "install", "-q", "-r", str(reqs)], timeout=900)
     if code == 0:   # smoke test: the new code must at least import
-        code, pip_out = _run([sys.executable, "-c", "import jarvis.server, jarvis.runtime, jarvis.telegram"],
-                             timeout=120)
+        code, pip_out = _run([sys.executable, "-m", "jarvis.selftest"], timeout=180)
     if code != 0:
         try:
             FAILED_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -250,6 +249,20 @@ def notify_setup(config) -> str:
         f"Claude Code sessions need: JARVIS_NOTIFY_URL=https://ntfy.sh/{config.notify_topic}\n\n"
         "Then say 'let me know when Claude Code is done'."
     )
+
+
+def set_env_value(key: str, value: str) -> None:
+    env = ROOT / ".env"
+    lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith(key + "=")]
+    env.write_text("\n".join(lines + [f"{key}={value}"]) + "\n")
+    os.environ[key] = value
+
+
+def set_city(arg: str = "") -> str:
+    if not arg:
+        return f"Current city: {os.getenv('JARVIS_CITY') or 'not set'}. Set it with /city Dallas"
+    set_env_value("JARVIS_CITY", arg.strip())
+    return f"Got it. Your morning briefing will include the weather for {arg.strip()}."
 
 
 def commands(config, jobs, brain=None) -> dict:
