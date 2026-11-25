@@ -1,6 +1,7 @@
 """Server admin from Telegram, so you never need the terminal:
 
     /status   health: memory, disk, uptime, Claude login, jobs, version
+    /stats    how fast Jarvis answers (Siri, web app, Telegram) and Claude usage
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
@@ -314,6 +315,7 @@ def commands(config, jobs, brain=None) -> dict:
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
+        "stats": lambda: __import__("jarvis.metrics", fromlist=["x"]).report(config.data_dir),
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
         "city": set_city,
