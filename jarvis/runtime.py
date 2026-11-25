@@ -18,6 +18,23 @@ from .config import Config
 from .tools import Context
 
 
+def _remember_once(data_dir: Path, key: str, fact: str) -> None:
+    """Add a fact the user told us outside Jarvis (e.g. in the dev session) to Jarvis's memory once."""
+    import json
+    from datetime import date
+
+    from .tools.memory import load_facts
+
+    facts = load_facts(data_dir)
+    if any(key in f.get("fact", "").lower() for f in facts):
+        return
+    facts.append({"id": max((f["id"] for f in facts), default=0) + 1, "fact": fact, "added": date.today().isoformat()})
+    try:
+        (data_dir / "memory.json").write_text(json.dumps(facts, indent=2))
+    except OSError:
+        pass
+
+
 @dataclass
 class Runtime:
     config: Config
@@ -373,6 +390,8 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
     rt._load_awaiting()
+    _remember_once(config.data_dir, "yattee",
+                   "Uses the YouTube app for videos and the Yattee app for music (never YouTube for music).")
     if os.getenv("JARVIS_NOTIFY_LISTENER", "1") != "0":
         from . import notify_listener
 
@@ -395,7 +414,6 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
         bot.commands = {
             **admin.commands(config, jobs, brain),
             "jobs": lambda: jobs.summary() if jobs else "No background jobs in this mode.",
-            "stats": lambda: metrics.report(config.data_dir),
             "reset": lambda: (brain.reset(), "New conversation started.")[1],
             "quiet": lambda: announcer.set_mode("quiet"),
             "hold": lambda: announcer.set_mode("hold"),

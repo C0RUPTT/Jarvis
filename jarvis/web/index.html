@@ -406,13 +406,16 @@
 
   // ---------- listening (voice activity detection) ----------
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
-  let resumeOnReturn = false, micFailures = 0, calibrated = false;
+  let resumeOnReturn = false, micFailures = 0, calibrated = false, calibratedFor = null;
   let speechStart = 0, lastLoud = 0, recStart = 0, noiseFloor = 0.01, vadTimer = null;
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
 
   async function openMic() {
-    calibrated = false;
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    // Reopened after you came back to the app: same mic, same room, so keep its noise level (saves
+    // 0.4 s of not hearing you). A different mic (AirPods in or out) is measured again.
+    const label = stream.getAudioTracks()[0]?.label || "";
+    if (label !== calibratedFor) { calibrated = false; calibratedFor = label; }
     for (const t of stream.getAudioTracks()) {
       t.onended = () => { diag("mic-ended"); if (stream) stream.__stale = true; };
     }
@@ -876,8 +879,9 @@
     try {
       const u = new URL(url);
       if (/(^|\.)waze\.com$/.test(u.hostname) && u.pathname.startsWith("/ul")) return "waze://" + u.search;
-      if (/(^|\.)youtube\.com$/.test(u.hostname) && u.pathname === "/watch") return "youtube://watch" + u.search;
-      if (u.hostname === "youtu.be") return "youtube://watch?v=" + u.pathname.slice(1);
+      // vnd.youtube:// belongs to the YouTube app alone ("youtube://" can be claimed by others, e.g. Yattee)
+      if (/(^|\.)youtube\.com$/.test(u.hostname) && u.pathname === "/watch") return "vnd.youtube://watch" + u.search;
+      if (u.hostname === "youtu.be") return "vnd.youtube://watch?v=" + u.pathname.slice(1);
       if (u.hostname === "maps.apple.com") return "maps://" + u.search;
       if (/(^|\.)spotify\.com$/.test(u.hostname)) return "spotify:" + u.pathname.slice(1).replace(/\//g, ":");
     } catch {}
