@@ -39,7 +39,9 @@ HANDOFF = re.compile(
     r"^(?:ok(?:ay)?,? |hey jarvis,? |jarvis,? )?(?:let'?s |can we |could we |please |i want to )?"
     r"(?:switch|move|go|take (?:this|it)|continue|carry on|talk|keep talking|finish (?:this|it)|pick (?:this|it) up)"
     r"\s+(?:over\s+)?(?:to|in|on)\s+(?:the\s+)?(?:jarvis\s+|web\s+)?app(?:\s+(?:instead|now|please))*\W*$"
-    r"|^(?:please )?open (?:the )?(?:jarvis|web) app\W*$|^open (?:yourself|jarvis)\W*$", re.I)
+    r"|^(?:please )?open (?:the )?(?:jarvis|web) app\W*$|^open (?:yourself|jarvis)\W*$"
+    r"|^(?:ok(?:ay)?,? |jarvis,? )?(?:let'?s )?(?:switch|swap|change)(?: over)?(?: to)?(?: the)? (?:web )?apps?(?: mode)?(?: now| please)?\W*$"
+    r"|^(?:web )?app mode\W*$|^hand (?:it|this|me) (?:off|over)(?: to the app)?\W*$", re.I)
 
 
 def app_link(rt) -> str:
