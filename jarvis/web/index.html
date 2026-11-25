@@ -289,6 +289,7 @@
       player.src = url;
       let finished = false, guard = null;
       const finish = (v) => { if (finished) return; finished = true; clearInterval(guard);
+        if (!player.ended) { try { player.pause(); } catch {} }
         player.onended = player.onerror = player.onpause = null; URL.revokeObjectURL(url); resolve(v); };
       player.onended = player.onerror = () => finish();
       player.onpause = () => { if (!player.ended) setTimeout(() => player.paused && finish(), 800); };  // interrupted
@@ -507,9 +508,25 @@
     listen();
   }
 
+  // Speaking and listening never overlap. Whatever asks to listen (a finished turn, coming back to
+  // the app, the watchdog), it waits until Jarvis's voice has actually stopped.
+  function jarvisTalking() {
+    const playing = !player.paused && !player.ended && player.currentTime > 0;
+    return playing || ("speechSynthesis" in window && speechSynthesis.speaking) || announcing;
+  }
+  let listenWhenQuiet = null;
+  function listenAfterSpeech() {
+    if (listenWhenQuiet) return;
+    listenWhenQuiet = setInterval(() => {
+      if (jarvisTalking()) return;
+      clearInterval(listenWhenQuiet); listenWhenQuiet = null;
+      setTimeout(() => { if (!jarvisTalking()) listen(); }, 350);   // let iPhone hand the mic back
+    }, 200);
+  }
   async function listen() {
     if (!conversation) return;
     if (document.visibilityState === "hidden") { resumeOnReturn = true; return; }   // resumes when you're back
+    if (jarvisTalking()) { diag("listen-deferred-while-speaking"); return listenAfterSpeech(); }
     if (useSR) return listenOnPhone();
     if (stream && (stream.__stale || stream.getAudioTracks().every(t => t.readyState === "ended"))) {
       stream.getTracks().forEach(t => t.stop()); stream = null;   // the old device went away
@@ -694,6 +711,7 @@
   }
   function listenForWake() {
     if (state !== "standby") return;
+    if (jarvisTalking()) { setTimeout(listenForWake, 400); return; }
     stopWake();
     let heard = "", lastHeard = 0, woke = false;
     wakeRec = new SR();
@@ -854,6 +872,7 @@
     await new Promise(r => setTimeout(r, 400));    // let iPhone hand the audio back
     if (audioCtx && audioCtx.state !== "running") await audioCtx.resume().catch(() => {});
     if (state === "standby") { listenForWake(); return; }
+    if (state === "speaking" || jarvisTalking()) return;   // mid-reply: listening starts when it ends
     if (conversation && state !== "thinking") listen();   // a pending answer resumes on its own (collect)
   }
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" ? onLeave() : onReturn());
@@ -867,6 +886,7 @@
   setInterval(() => {
     if (document.visibilityState !== "visible" || announcing) { idleSince = 0; return; }
     const listeningNow = !!(rec || vadTimer);
+    if (jarvisTalking() || state === "speaking") { idleSince = 0; return; }
     const stuck = (conversation && state === "listening" && !listeningNow) ||
                   (conversation && state === "idle") ||
                   (state === "standby" && SR && !wakeRec && !resumeOnReturn);
