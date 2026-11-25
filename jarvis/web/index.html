@@ -51,12 +51,62 @@
   #setup { display: none; flex: 1; flex-direction: column; justify-content: center; gap: 12px; text-align: center; }
   body.needs-token #setup { display: flex; }
   body.needs-token #log, body.needs-token #stage, body.needs-token #chat { display: none; }
+  [hidden] { display: none !important; }
+  /* ---- views & tabs ---- */
+  .tabs { display: flex; gap: 6px; }
+  .tabs button.active { color: var(--text); border-color: var(--accent); }
+  .view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .view[hidden] { display: none; }
+  body.needs-token .view { display: none; }
+  /* ---- dashboard ---- */
+  #dashView { overflow-y: auto; gap: 14px; padding: 8px 0 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  .card h2 { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 10px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  .label { color: var(--muted); font-size: 13px; min-width: 96px; }
+  .seg button, .small { background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+  .seg button.on { color: #00141d; background: var(--accent); border-color: var(--accent); }
+  .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+    word-break: break-word; color: var(--muted); margin: 0; }
+  .job { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+  .job:first-of-type { border-top: none; }
+  .job .head { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .pill { border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
+  .pill.running { background: rgba(76,201,240,.18); color: var(--accent); }
+  .pill.queued { background: rgba(255,255,255,.08); }
+  .pill.done { background: rgba(128,237,153,.15); color: var(--ok); }
+  .pill.failed, .pill.cancelled { background: rgba(247,37,133,.15); color: var(--accent-2); }
+  .job .task { margin: 6px 0; overflow-wrap: anywhere; }
+  .job .result { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+  .job .act pre { max-height: 220px; overflow-y: auto; }
+  .job details summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+  .inline { display: flex; gap: 6px; margin-top: 6px; }
+  .inline input, .card textarea { flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 16px; }
+  .card textarea { width: 100%; min-height: 64px; resize: vertical; }
+  .primary { background: var(--accent); color: #00141d; border: none; border-radius: 999px;
+    padding: 8px 16px; font-weight: 600; font-size: 14px; }
+  .list { margin: 0; padding: 0; list-style: none; }
+  .list li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; overflow-wrap: anywhere;
+    border-top: 1px solid var(--line); font-size: 14px; }
+  .list li:first-child { border-top: none; }
+  .empty { color: var(--muted); font-size: 14px; }
+  #toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--accent); padding: 10px 16px; border-radius: 12px;
+    max-width: 90vw; font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
 </style>
 </head>
 <body data-state="idle">
 <header>
   <h1>J.A.R.V.I.S.</h1>
-  <button id="reset" type="button">New chat</button>
+  <div class="tabs">
+    <button id="tabTalk" type="button" class="active">Talk</button>
+    <button id="tabDash" type="button">Dashboard</button>
+    <button id="reset" type="button">New chat</button>
+  </div>
 </header>
 
 <section id="setup">
@@ -64,6 +114,7 @@
   <form id="tokenForm"><input id="tokenInput" type="text" placeholder="…or paste the token here"><button>Save</button></form>
 </section>
 
+<main id="talkView" class="view">
 <div id="log"></div>
 
 <div id="stage">
@@ -75,6 +126,53 @@
   <input id="text" type="text" placeholder="Or type to Jarvis…" enterkeyhint="send">
   <button>Send</button>
 </form>
+</main>
+
+<main id="dashView" class="view" hidden>
+  <section class="card">
+    <h2>Coding <span id="jobCount" class="empty"></span></h2>
+    <textarea id="jobTask" placeholder="What should Claude Code build or fix? e.g. Build a workout tracker web app"></textarea>
+    <div class="row"><button id="jobStart" class="primary" type="button">Start job</button></div>
+    <div id="jobs"></div>
+  </section>
+
+  <section class="card">
+    <h2>Controls</h2>
+    <div class="row"><span class="label">Notifications</span>
+      <span class="seg" id="segMode">
+        <button data-v="normal">Normal</button><button data-v="quiet">Quiet</button><button data-v="hold">Hold</button>
+      </span>
+      <button class="small" id="wakeBtn" data-v="wake" hidden>☀️ Good morning</button>
+    </div>
+    <div class="row"><span class="label">Claude Code done</span>
+      <span class="seg" id="segWatch">
+        <button data-v="off">Off</button><button data-v="once">Next time</button><button data-v="always">Always</button>
+      </span>
+    </div>
+    <div class="row"><span class="label">Version</span><button class="small" id="updateBtn" type="button">Check for updates</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Held for you <button class="small" id="clearHeld" type="button">Clear</button></h2>
+    <ul class="list" id="held"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Status</h2>
+    <pre class="mono" id="statusText"></pre>
+  </section>
+
+  <section class="card">
+    <h2>Usage &amp; speed</h2>
+    <pre class="mono" id="statsText"></pre>
+  </section>
+
+  <section class="card">
+    <h2>What Jarvis remembers</h2>
+    <ul class="list" id="memory"></ul>
+  </section>
+</main>
+<div id="toast"></div>
 
 <audio id="player" playsinline></audio>
 
@@ -297,6 +395,145 @@
 
   if (token) api("/api/status").then(s => add("sys", `Connected. At your service, ${s.user_name}.`))
     .catch(e => add("sys", "⚠ Can't reach Jarvis: " + e.message));
+})();
+</script>
+
+<script>
+/* ---------------- Dashboard ---------------- */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const token = () => { try { return localStorage.getItem("jarvis-token"); } catch { return null; } };
+  const talkView = $("talkView"), dashView = $("dashView");
+  let timer = null;
+  const jobEls = new Map();
+
+  async function call(path, body, method) {
+    const res = await fetch(path, {
+      method: method || (body ? "POST" : "GET"),
+      headers: { "X-Jarvis-Token": token() || "", ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
+    return res.json();
+  }
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3500);
+  }
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text; return e; };
+  const dur = (s) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+
+  function show(which) {
+    const dash = which === "dash";
+    dashView.hidden = !dash; talkView.hidden = dash;
+    $("tabDash").classList.toggle("active", dash); $("tabTalk").classList.toggle("active", !dash);
+    $("reset").hidden = dash;
+    clearInterval(timer);
+    if (dash) { refresh(); timer = setInterval(refresh, 4000); }
+    try { localStorage.setItem("jarvis-tab", which); } catch {}
+  }
+  $("tabTalk").onclick = () => show("talk");
+  $("tabDash").onclick = () => show("dash");
+
+  function renderJob(j) {
+    let box = jobEls.get(j.id);
+    if (!box) {
+      box = el("div", "job");
+      box.innerHTML = `<div class="head"><span class="pill"></span><span class="num"></span><span class="time"></span></div>
+        <div class="task"></div><details class="act"><summary>Live activity</summary><pre class="mono"></pre></details>
+        <div class="result"></div>
+        <div class="inline follow"><input placeholder="Follow-up: e.g. make the buttons bigger"><button class="small" type="button">Send</button></div>
+        <div class="row"><button class="small cancel" type="button">Cancel</button></div>`;
+      const input = box.querySelector(".follow input");
+      const send = async () => {
+        const task = input.value.trim(); if (!task) return;
+        try { const r = await call("/api/jobs", { task, follow_up_of: j.id }); input.value = "";
+              toast(`Follow-up started as job ${r.id}.`); refresh(); } catch (e) { toast(e.message); }
+      };
+      box.querySelector(".follow button").onclick = send;
+      input.onkeydown = (e) => { if (e.key === "Enter") send(); };
+      box.querySelector(".cancel").onclick = async () => {
+        try { toast((await call(`/api/jobs/${j.id}/cancel`, {})).result); refresh(); } catch (e) { toast(e.message); }
+      };
+      jobEls.set(j.id, box);
+    }
+    const pill = box.querySelector(".pill"); pill.className = `pill ${j.status}`; pill.textContent = j.status;
+    box.querySelector(".num").textContent = `#${j.id}` + (j.continues ? ` (follows #${j.continues})` : "");
+    box.querySelector(".time").textContent = j.seconds ? dur(j.seconds) : "";
+    box.querySelector(".task").textContent = j.task;
+    const active = j.status === "running" || j.status === "queued";
+    const act = box.querySelector(".act");
+    act.querySelector("pre").textContent = j.activity.length ? j.activity.join("\n") : "Waiting for the first step…";
+    act.hidden = !j.activity.length && !active;
+    if (!act.dataset.touched) act.open = j.status === "running";
+    act.onclick = () => { act.dataset.touched = "1"; };
+    box.querySelector(".result").textContent = j.result || "";
+    box.querySelector(".follow").hidden = active || !["done", "failed"].includes(j.status);
+    box.querySelector(".cancel").parentElement.hidden = !active;
+    return box;
+  }
+
+  function setSeg(id, value) {
+    document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === value));
+  }
+
+  async function refresh() {
+    if (!token()) return;
+    let d;
+    try { d = await call("/api/dashboard"); } catch (e) { $("statusText").textContent = "⚠ " + e.message; return; }
+    // jobs
+    const list = $("jobs");
+    const ids = d.jobs.map(j => j.id);
+    d.jobs.forEach((j, i) => { const box = renderJob(j); if (list.children[i] !== box) list.insertBefore(box, list.children[i] || null); });
+    [...list.children].forEach(c => { if (![...jobEls].some(([id, b]) => b === c && ids.includes(id))) c.remove(); });
+    const running = d.jobs.filter(j => j.status === "running").length;
+    $("jobCount").textContent = d.jobs.length ? `${running} running · ${d.jobs.length} recent` : "";
+    if (!d.jobs.length && !list.querySelector(".empty")) list.append(el("p", "empty", "No coding jobs yet. Describe one above, or just ask Jarvis."));
+    if (d.jobs.length) list.querySelectorAll(".empty").forEach(e => e.remove());
+    // controls
+    setSeg("segMode", d.mode); setSeg("segWatch", d.claude_watch);
+    $("wakeBtn").hidden = !d.night;
+    // held
+    const held = $("held"); held.replaceChildren();
+    if (!d.held.length) held.append(el("li", "empty", d.night ? "Night mode is on; nothing held yet." : "Nothing waiting."));
+    d.held.forEach(h => held.append(el("li", "", h)));
+    // status, stats, memory
+    $("statusText").textContent = d.status;
+    $("statsText").textContent = d.stats;
+    const mem = $("memory"); mem.replaceChildren();
+    if (!d.memory.length) mem.append(el("li", "empty", "Nothing yet. Say \"remember that…\" to Jarvis."));
+    d.memory.forEach(f => {
+      const li = el("li"); li.append(el("span", "", f.fact));
+      const x = el("button", "small", "✕"); x.title = "Forget";
+      x.onclick = async () => { if (!confirm(`Forget: "${f.fact}"?`)) return;
+        try { toast((await call("/api/control", { action: "forget", value: f.id })).result); refresh(); } catch (e) { toast(e.message); } };
+      li.append(x); mem.append(li);
+    });
+  }
+
+  // buttons
+  $("jobStart").onclick = async () => {
+    const task = $("jobTask").value.trim(); if (!task) return;
+    try { const r = await call("/api/jobs", { task }); $("jobTask").value = ""; toast(`Job ${r.id} started.`); refresh(); }
+    catch (e) { toast(e.message); }
+  };
+  document.querySelectorAll("#segMode button, #wakeBtn").forEach(b => b.onclick = async () => {
+    try { toast((await call("/api/control", { action: "mode", value: b.dataset.v })).result); refresh(); } catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll("#segWatch button").forEach(b => b.onclick = async () => {
+    try { toast((await call("/api/control", { action: "watch", value: b.dataset.v })).result); refresh(); } catch (e) { toast(e.message); }
+  });
+  $("clearHeld").onclick = async () => {
+    try { toast((await call("/api/control", { action: "clear_held" })).result); refresh(); } catch (e) { toast(e.message); }
+  };
+  $("updateBtn").onclick = async () => {
+    toast("Checking…");
+    try { toast((await call("/api/control", { action: "update" })).result.split("\n")[0]); } catch (e) { toast(e.message); }
+  };
+
+  let saved = null; try { saved = localStorage.getItem("jarvis-tab"); } catch {}
+  show(saved === "dash" ? "dash" : "talk");
 })();
 </script>
 </body>

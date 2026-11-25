@@ -204,6 +204,75 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         summary = str(payload.get("last_assistant_message") or "")
         return {"result": rt.claude_code_finished(label, clean_for_speech(summary))}
 
+    # ---- dashboard -------------------------------------------------------------------------
+    def _job_view(j) -> dict:
+        now = time.time()
+        return {
+            "id": j.id, "task": j.task, "status": j.status, "result": j.result,
+            "continues": j.continues, "activity": j.activity[-15:],
+            "seconds": int((j.finished or now) - (j.started or j.created)) if j.started else 0,
+            "created": j.created,
+        }
+
+    @app.get("/api/dashboard")
+    def dashboard(x_jarvis_token: str | None = Header(None)):
+        check(x_jarvis_token)
+        from . import admin
+        from .tools.memory import load_facts
+
+        jobs = sorted(rt.jobs.jobs.values(), key=lambda j: j.id, reverse=True)[:20] if rt.jobs else []
+        return {
+            "user_name": config.user_name,
+            "status": admin.status(config, rt.jobs, brain),
+            "mode": announcer.mode,
+            "night": announcer.night,
+            "held": list(announcer._held),
+            "claude_watch": rt.claude_watch,
+            "jobs": [_job_view(j) for j in jobs],
+            "memory": load_facts(config.data_dir),
+            "stats": metrics.report(config.data_dir),
+        }
+
+    @app.post("/api/jobs")
+    def new_job(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
+        check(x_jarvis_token)
+        if rt.jobs is None:
+            raise HTTPException(status_code=400, detail="Background jobs aren't available")
+        task = str(payload.get("task", "")).strip()
+        if not task:
+            raise HTTPException(status_code=400, detail="No task")
+        follow = payload.get("follow_up_of")
+        job = rt.jobs.submit(task, continues=int(follow) if follow else None)
+        return {"id": job.id}
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: int, x_jarvis_token: str | None = Header(None)):
+        check(x_jarvis_token)
+        return {"result": rt.jobs.cancel(job_id) if rt.jobs else "No jobs"}
+
+    @app.post("/api/control")
+    def control(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
+        """Dashboard buttons: delivery mode, Claude Code watch, held items, memory, update."""
+        check(x_jarvis_token)
+        from . import admin
+        from .tools.memory import forget
+
+        action = payload.get("action")
+        if action == "mode":
+            if payload.get("value") == "wake":
+                return {"result": rt.morning()}
+            return {"result": announcer.set_mode(str(payload.get("value")))}
+        if action == "watch":
+            rt.claude_watch = str(payload.get("value", "off"))
+            return {"result": f"Claude Code announcements: {rt.claude_watch}"}
+        if action == "clear_held":
+            return {"result": f"Cleared {len(announcer.take_held())} item(s)."}
+        if action == "forget":
+            return {"result": forget(rt.ctx, int(payload.get("value")))}
+        if action == "update":
+            return {"result": admin.update() if admin.update_available() else "Already on the latest version."}
+        raise HTTPException(status_code=400, detail="Unknown action")
+
     @app.post("/api/reset")
     def reset(x_jarvis_token: str | None = Header(None)):
         check(x_jarvis_token)

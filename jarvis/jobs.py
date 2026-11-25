@@ -37,6 +37,7 @@ class Job:
     session_id: str | None = None
     continues: int | None = None    # id of the job this one follows up on
     quiet: bool = False             # deliver silently
+    activity: list = field(default_factory=list)   # live log of what the worker is doing (dashboard)
 
     def describe(self) -> str:
         age = int(time.time() - (self.started or self.created))
@@ -116,7 +117,7 @@ class JobRunner:
 
         cmd = [
             self.claude or "claude", "-p", job.task,
-            "--output-format", "json",
+            "--output-format", "stream-json", "--verbose",   # stream so the dashboard can show progress
             "--model", self.model,
             "--permission-mode", self.permission_mode,
             "--append-system-prompt", WORKER_INSTRUCTIONS,
@@ -125,22 +126,36 @@ class JobRunner:
         if previous and previous.session_id:
             cmd += ["--resume", previous.session_id]   # follow-up: same conversation, same project
 
-        output = ""
+        output, result_event = "", None
         try:
             self._current = subprocess.Popen(
                 cmd, cwd=self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             )
-            output, _ = self._current.communicate(timeout=3 * 3600)
-        except subprocess.TimeoutExpired:
-            self._current.kill()
-            output = '{"is_error": true, "result": "The job ran over three hours, so I stopped it."}'
+            killer = threading.Timer(3 * 3600, self._current.kill)
+            killer.start()
+            try:
+                for line in self._current.stdout:
+                    event = _json_or_none(line)
+                    if event is None:
+                        output = (output + line)[-4000:]
+                        continue
+                    if event.get("type") == "result":
+                        result_event = event
+                    elif event.get("type") == "assistant":
+                        self._note_activity(job, event)
+                self._current.wait()
+            finally:
+                timed_out = not killer.is_alive() and self._current.returncode not in (0, None)
+                killer.cancel()
+            if timed_out and result_event is None:
+                output = '{"is_error": true, "result": "The job ran over three hours, so I stopped it."}'
         except FileNotFoundError:
             output = '{"is_error": true, "result": "Claude Code is not installed on the server."}'
         finally:
             self._current = None
 
-        result = _parse_result(output)
+        result = result_event or _parse_result(output)
         with self._lock:
             if job.status == "cancelled":
                 return
@@ -153,6 +168,23 @@ class JobRunner:
                        ok=job.status == "done", job_id=job.id)
         self.on_finished(job)
 
+    def _note_activity(self, job: Job, event: dict) -> None:
+        """Turn a worker message into short human-readable activity lines for the dashboard."""
+        for block in (event.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use":
+                args = block.get("input") or {}
+                detail = (args.get("command") or args.get("file_path") or args.get("path") or args.get("query")
+                          or args.get("url") or args.get("pattern") or args.get("description") or "")
+                first_line = str(detail).strip().splitlines()[0] if str(detail).strip() else ""
+                line = f"{block.get('name')}: {first_line[:120]}"
+            elif block.get("type") == "text" and block.get("text", "").strip():
+                line = "💬 " + block["text"].strip().replace("\n", " ")[:200]
+            else:
+                continue
+            with self._lock:
+                job.activity = (job.activity + [f"{time.strftime('%H:%M:%S')}  {line}"])[-40:]
+                self._save()
+
     def _load(self) -> dict[int, Job]:
         if not self.state_file.exists():
             return {}
@@ -164,6 +196,16 @@ class JobRunner:
     def _save(self) -> None:
         recent = sorted(self.jobs.values(), key=lambda j: j.id)[-200:]
         self.state_file.write_text(json.dumps([asdict(j) for j in recent], indent=1))
+
+
+def _json_or_none(line: str):
+    line = line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
 
 
 def _parse_result(output: str) -> dict:
