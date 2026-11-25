@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import hmac
+import os
 import re
 import threading
 import tempfile
@@ -47,6 +48,19 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         speak = lambda text: speaker.say(text, wait=False)  # noqa: E731
 
     rt = runtime.build(config, speak=speak, on_interim=lambda t: print(f"JARVIS (interim): {t}"))
+
+    def warm_speech_model():   # load speech recognition ahead of time, so the first voice note isn't slow
+        time.sleep(60)
+        try:
+            from .voice.listener import Transcriber
+
+            if rt._whisper is None:
+                rt._whisper = Transcriber(config.whisper_model)
+        except Exception as e:  # noqa: BLE001
+            print(f"[voice] couldn't preload speech recognition: {e}")
+
+    if os.getenv("JARVIS_PRELOAD_WHISPER", "1") != "0":
+        threading.Thread(target=warm_speech_model, daemon=True).start()
     brain, announcer = rt.brain, rt.announcer
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
@@ -166,19 +180,22 @@ def create_app(config: Config, speak_on_laptop: bool = False):
 
     speech_texts: dict[str, tuple[float, str]] = {}   # id -> (created, text): streamed by /api/speech
 
-    def _process_talk(path: str) -> dict:
+    def _process_talk(path: str = "", text: str = "") -> dict:
         started = time.monotonic()
-        try:
-            heard = rt.transcribe(path)
-        finally:
-            Path(path).unlink(missing_ok=True)
+        if text:   # already turned into text on the phone (much faster than this small server)
+            heard = text
+        else:
+            try:
+                heard = rt.transcribe(path)
+            finally:
+                Path(path).unlink(missing_ok=True)
         heard_at = time.monotonic()
         print(f"\nYou (phone): {heard!r}")
         if len(heard.strip(" .!?,")) < 2:
             return {"heard": "", "reply": "", "speech": "", "audio": None}
         reply = rt.ask(heard)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
-                       think=round(time.monotonic() - heard_at, 2))
+                       think=round(time.monotonic() - heard_at, 2), on_phone=bool(text))
         print(f"JARVIS: {reply}")
         # Don't make the phone wait for the whole voice recording: it streams the audio from
         # /api/speech and starts playing as soon as the first words are ready.
@@ -241,6 +258,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             path = f.name
         if wait:
             return _process_talk(path)
+        return {"id": _start_talk(path=path)}
+
+    def _start_talk(**kwargs) -> str:
         import secrets as _secrets
 
         talk_id = _secrets.token_urlsafe(8)
@@ -248,9 +268,18 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             for old in [k for k, v in talks.items() if time.time() - v["created"] > 3600]:
                 talks.pop(old)
             talks[talk_id] = {"status": "working", "result": None, "created": time.time(), "fetched": False}
-        future = pool.submit(_process_talk, path)
+        future = pool.submit(_process_talk, **kwargs)
         future.add_done_callback(lambda f: _finish_talk(talk_id, f))
-        return {"id": talk_id}
+        return talk_id
+
+    @app.post("/api/talk_text")
+    def talk_text(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
+        """Like /api/talk, but the phone already recognised the speech. Returns an id to collect."""
+        check(x_jarvis_token)
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="No text")
+        return {"id": _start_talk(text=text)}
 
     @app.get("/api/talk/{talk_id}")
     def talk_result(talk_id: str, x_jarvis_token: str | None = Header(None)):

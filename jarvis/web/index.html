@@ -283,6 +283,7 @@
     src.connect(analyser);
   }
   function pauseMic() {   // stop listening but keep the mic open: reopening it makes iPhone ask permission again
+    stopSR?.();
     clearInterval(vadTimer); vadTimer = null;
     if (recorder && recorder.state !== "inactive") { recorder.onstop = null; recorder.stop(); }
   }
@@ -298,8 +299,73 @@
     recorder.start();
   }
 
+  // ---------- listening with the iPhone's own speech recognition (fast) ----------
+  // Turning speech into text on the phone takes no time; on the small server it took ~10 seconds.
+  // If the phone refuses (some iOS versions block it in home-screen apps), we fall back to
+  // recording and sending the audio, and remember that choice.
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null;
+
+  function stopSR() {
+    clearInterval(srTimer); srTimer = null;
+    if (rec) { const r = rec; rec = null; r.onend = r.onresult = r.onerror = null; try { r.abort(); } catch {} }
+  }
+  function listenOnPhone() {
+    setState("listening");
+    let text = "", lastHeard = 0, done = false;
+    const started = performance.now();
+    rec = new SR();
+    rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
+    rec.onresult = (e) => {
+      let joined = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript.trim();
+        // Some iPhones repeat the whole sentence in each result: replace instead of appending.
+        joined = t.toLowerCase().startsWith(joined.toLowerCase()) ? t : (joined + " " + t).trim();
+      }
+      text = joined; lastHeard = performance.now();
+      statusEl.textContent = text;
+      orb.style.setProperty("--level", 0.5);
+    };
+    rec.onerror = (e) => {
+      if (["not-allowed", "service-not-allowed", "audio-capture"].includes(e.error)) {
+        stopSR(); useSR = false; safeSet("jarvis-stt", "server");
+        add("sys", "Using the server for speech recognition (the phone's own isn't available here).");
+        listen();
+      }
+    };
+    rec.onend = () => {   // iPhone stops listening on its own now and then: carry on
+      if (!done && rec && conversation) { try { rec.start(); } catch {} }
+    };
+    srTimer = setInterval(() => {
+      const now = performance.now();
+      if (text && now - lastHeard > 1500) {                       // a 1.5-second pause: they've finished
+        done = true; stopSR(); sendText(text);
+      } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
+        done = true; stopSR(); listen();
+      }
+    }, 100);
+    try { rec.start(); } catch (e) { stopSR(); useSR = false; listen(); }
+  }
+
+  async function sendText(text) {
+    setState("thinking");
+    try {
+      const { id } = await api("/api/talk_text", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }) });
+      savePending(id);
+      const data = await collect(id);
+      if (!data || !data.heard) return listen();
+      add("you", data.heard);
+      await reply(data);
+      if (GOODBYE.test(data.heard)) return endConversation();
+    } catch (e) { add("sys", "⚠ " + e.message); }
+    listen();
+  }
+
   async function listen() {
     if (!conversation) return;
+    if (useSR) return listenOnPhone();
     try { if (!stream) await openMic(); }
     catch (e) { conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return; }
     setState("listening");
