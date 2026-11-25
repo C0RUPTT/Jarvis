@@ -1,0 +1,13 @@
+# Packages for the always-on server (Google Cloud free e2-micro or any Linux server).
+# Leaner than requirements.txt: no microphone, wake word, speakers or desktop control.
+anthropic>=2.13.0
+mcp>=2.3,<3
+python-dotenv>=1.0
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9
+edge-tts>=7.0
+numpy>=1.26
+faster-whisper>=1.2
+psutil>=5.9
+caldav>=2.0
