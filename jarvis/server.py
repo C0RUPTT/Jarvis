@@ -14,6 +14,11 @@ import tempfile
 import time
 from pathlib import Path
 
+# FastAPI must be imported at module level: with `from __future__ import annotations` the endpoint
+# annotations (e.g. UploadFile) are resolved from this module's globals.
+from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse
+
 from . import metrics, runtime
 from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
@@ -26,8 +31,6 @@ READY_CHECK = re.compile(r"^(is it |are you )?(ready|done|finished)( yet)?\??$|^
 
 
 def create_app(config: Config, speak_on_laptop: bool = False):
-    from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
-    from fastapi.responses import FileResponse, PlainTextResponse
 
     speak = None
     if speak_on_laptop:
@@ -40,6 +43,17 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     brain, announcer = rt.brain, rt.announcer
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def show_errors(request: Request, exc: Exception):
+        """Say what actually broke (and log it) instead of a bare "Internal Server Error"."""
+        import traceback
+
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"[:300]})
 
     def check(token: str | None) -> None:
         if not token or not hmac.compare_digest(token, config.token):

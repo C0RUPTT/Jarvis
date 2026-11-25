@@ -213,7 +213,10 @@
   async function api(path, opts = {}) {
     const res = await fetch(path, { ...opts, headers: { "X-Jarvis-Token": token, ...(opts.headers || {}) } });
     if (res.status === 401) { document.body.classList.add("needs-token"); throw new Error("Bad token"); }
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail;
+      throw new Error(detail ? `Jarvis error: ${detail}` : `Server error ${res.status}`);
+    }
     return res.json();
   }
 
@@ -296,7 +299,7 @@
       const threshold = Math.max(noiseFloor * 3, 0.02);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold) { lastLoud = now; if (!speechStart) speechStart = now; }
-      if (speechStart && now - lastLoud > 900) {                 // a pause: they've finished
+      if (speechStart && now - lastLoud > 2000) {                // a 2-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
