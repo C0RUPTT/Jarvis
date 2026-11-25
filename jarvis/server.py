@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from . import fastpath, metrics, runtime, spoken
+from . import fastpath, metrics, runtime, siritrace, spoken
 from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
 
@@ -530,6 +530,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 return PlainTextResponse(nothing)
             raise HTTPException(status_code=400, detail="No text")
         print(f"\nYou: {text}")
+        if format == "siri":
+            siritrace.record("you", text)
         if format == "siri" and rt.dictation is None and GOODBYE.match(text.strip()):
             # Tell the Shortcut to end the conversation (its own "bye" check misses "by", "that's all"...).
             return {"say": FAREWELLS[int(time.time()) % len(FAREWELLS)], "stop": "yes"}
@@ -563,6 +565,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             for extra in opens[:-1]:   # only one link can open at a time; send the rest to Telegram
                 announcer.push(f"{extra['text']}\n{extra['url']}")
             print(f"JARVIS: {result}")
+            siritrace.record("jarvis", result.get("say", "") + (" [then wait]" if result.get("wait") else "")
+                             + (" [then stop]" if result.get("stop") else ""), time.monotonic() - started,
+                             expect=("Shortcut never called the waiting step after this (Siri ended it, or the "
+                                     "Shortcut's Mode/wait part isn't set up)") if result.get("wait") else
+                                    "Siri conversation ended (no reply from you)",
+                             within=12 if result.get("wait") else 40)
             return result
         if format == "text":
             started = time.monotonic()
@@ -580,6 +588,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if it's still not ready."""
         payload = payload or {}
         check(x_jarvis_token or token or payload.get("token"))
+        siritrace.record("wait", "Shortcut called the waiting step")
+        wait_started = time.monotonic()
         rt.last_siri = wait_state["last"] = time.time()
         print("[siri] waiting for a late answer...")
         with pending_lock:
@@ -605,6 +615,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 result = {"say": clean_for_speech(" ".join(ready))}
                 if link:
                     result["open"] = link
+                siritrace.record("jarvis", "late answer: " + result["say"], time.monotonic() - wait_started,
+                                 expect="Siri conversation ended (no reply from you)", within=40)
                 return result
             with pending_lock:
                 waiting = any(not p["delivered"] for p in pending)
@@ -612,7 +624,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 return {"say": "Anything else, sir?"}
             time.sleep(0.4)
         # Not ready: let Siri listen again (that keeps it alive). "Go on" waits for the answer again.
-        return {"say": "Still working on it, sir. Say go on to hear it, or ask me something else."}
+        say = ("It's taking a little longer, sir. I'll send it to your phone the moment it's ready, "
+               "or say go on to keep waiting.")
+        siritrace.record("jarvis", "not ready yet: " + say, time.monotonic() - wait_started,
+                         expect="Siri conversation ended (no reply from you)", within=40)
+        return {"say": say}
 
     @app.post("/api/wake")
     def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),

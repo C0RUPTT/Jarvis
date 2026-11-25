@@ -6,6 +6,7 @@
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
+    /siri     timeline of recent Siri conversations (where one went wrong)
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
     /city     your city for the morning weather, e.g. /city Dallas
@@ -319,6 +320,7 @@ def commands(config, jobs, brain=None) -> dict:
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
+        "siri": lambda: __import__("jarvis.siritrace", fromlist=["x"]).report(),
         "stats": lambda arg="": __import__("jarvis.metrics", fromlist=["x"]).report(
             config.data_dir, (float(arg) / 24) if arg.replace(".", "", 1).isdigit() else 3),
         "shortcut": lambda: shortcut(config, getattr(brain, "_telegram", None)),
