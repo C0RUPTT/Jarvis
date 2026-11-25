@@ -58,6 +58,7 @@ class Config:
         except ImportError:
             pass
 
+        apply_timezone(os.getenv("JARVIS_TIMEZONE", ""))
         data_dir = Path(os.getenv("JARVIS_DATA_DIR", Path.home() / ".jarvis")).expanduser()
         data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +88,27 @@ class Config:
             quiet_start=os.getenv("JARVIS_QUIET_START", "23:00"),
             unsafe_no_confirm=_env_bool("JARVIS_UNSAFE_NO_CONFIRM"),
         )
+
+
+def apply_timezone(name: str) -> bool:
+    """Run Jarvis on the user's local time (servers default to UTC). name: e.g. America/New_York."""
+    if not name:
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(name)  # validate
+    except Exception:  # noqa: BLE001
+        print(f"[config] Unknown time zone {name!r}; staying on the server's time zone.")
+        return False
+    os.environ["TZ"] = name
+    try:
+        import time
+
+        time.tzset()
+    except AttributeError:  # Windows has no tzset; TZ is still honoured by new processes
+        pass
+    return True
 
 
 def _stored_token(data_dir: Path) -> str:

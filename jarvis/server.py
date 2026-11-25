@@ -59,9 +59,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         except concurrent.futures.TimeoutError:
             def deliver_late(f):
                 try:
-                    announcer.announce(f"About \"{text[:80]}\": {f.result()}")
+                    announcer.announce(f"About \"{text[:80]}\": {f.result()}", reply=True)
                 except Exception as e:  # noqa: BLE001
-                    announcer.announce(f"Sorry, \"{text[:80]}\" failed: {e}")
+                    announcer.announce(f"Sorry, \"{text[:80]}\" failed: {e}", reply=True)
             future.add_done_callback(deliver_late)
             return STILL_WORKING
 

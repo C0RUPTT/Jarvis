@@ -5,6 +5,7 @@
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
     /shortcut the exact links to paste into the iPhone Shortcuts
+    /timezone set your time zone, e.g. /timezone America/New_York
     /help     list of commands
 """
 
@@ -110,6 +111,32 @@ def shortcut(config) -> str:
     )
 
 
+US_ZONES = {"eastern": "America/New_York", "central": "America/Chicago", "mountain": "America/Denver",
+            "arizona": "America/Phoenix", "pacific": "America/Los_Angeles", "alaska": "America/Anchorage",
+            "hawaii": "Pacific/Honolulu", "et": "America/New_York", "ct": "America/Chicago",
+            "mt": "America/Denver", "pt": "America/Los_Angeles", "est": "America/New_York",
+            "cst": "America/Chicago", "mst": "America/Denver", "pst": "America/Los_Angeles"}
+
+
+def set_timezone(arg: str = "") -> str:
+    from datetime import datetime
+
+    from .config import apply_timezone
+
+    if not arg:
+        return (f"Current time zone: {os.environ.get('TZ') or 'server default (UTC)'}, "
+                f"local time {datetime.now():%I:%M %p}.\nSet it with e.g. /timezone eastern, "
+                "/timezone pacific, or /timezone Europe/London")
+    name = US_ZONES.get(arg.lower().strip(), arg.strip())
+    if not apply_timezone(name):
+        return f"I don't know the time zone '{arg}'. Try eastern, central, mountain, pacific, or e.g. America/New_York."
+    env = ROOT / ".env"
+    lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith("JARVIS_TIMEZONE=")]
+    env.write_text("\n".join(lines + [f"JARVIS_TIMEZONE={name}"]) + "\n")
+    _restart_soon()
+    return f"Time zone set to {name} (it's {datetime.now():%I:%M %p} there). Restarting to apply it everywhere."
+
+
 def commands(config, jobs) -> dict:
     return {
         "status": lambda: status(config, jobs),
@@ -117,5 +144,6 @@ def commands(config, jobs) -> dict:
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
         "shortcut": lambda: shortcut(config),
+        "timezone": set_timezone,
         "help": lambda: __doc__.strip(),
     }

@@ -100,7 +100,12 @@ class TelegramBot:
 
         command = text.split()[0].lower().lstrip("/") if text.startswith("/") else ""
         if command in self.commands:
-            self.send(self.commands[command]())
+            arg = text.split(maxsplit=1)[1].strip() if " " in text else ""
+            func = self.commands[command]
+            try:
+                self.send(func(arg))
+            except TypeError:       # command takes no argument
+                self.send(func())
             return
         if command == "start":
             self.send("Jarvis online. Text me, or hold the mic button to talk.")

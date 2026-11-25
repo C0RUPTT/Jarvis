@@ -36,8 +36,15 @@ class Announcer:
 
     # -- what tools and jobs call ------------------------------------------------
 
-    def announce(self, text: str, urgent: bool = False, quiet: bool = False) -> None:
-        """Say something unprompted, e.g. a timer going off or a job finishing."""
+    def announce(self, text: str, urgent: bool = False, quiet: bool = False, reply: bool = False) -> None:
+        """Say something unprompted, e.g. a timer going off or a job finishing.
+        reply=True: the answer to something the user just asked, so it's never held (only made
+        silent at night or in quiet/hold mode)."""
+        if reply and not urgent:
+            silent = quiet or self.night or self.mode != "normal"
+            self._add({"type": "say", "text": text, "silent": silent})
+            self.push(text, silent=silent)
+            return
         if (self.mode == "hold" or self.night) and not urgent:
             with self._lock:
                 self._held.append(f"[{datetime.now():%H:%M}] {text}")
