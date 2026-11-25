@@ -341,6 +341,11 @@
     clearInterval(vadTimer); vadTimer = null;
     if (recorder && recorder.state !== "inactive") { recorder.onstop = null; recorder.stop(); }
   }
+  navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+    diag("device-change");
+    if (stream && !vadTimer) { stream.getTracks().forEach(t => t.stop()); stream = null; }   // reopen on next listen
+    else if (stream) stream.__stale = true;
+  });
   function closeMic() {   // only when the conversation ends
     pauseMic();
     stream?.getTracks().forEach(t => t.stop()); stream = null;
@@ -358,11 +363,18 @@
   // If the phone refuses (some iOS versions block it in home-screen apps), we fall back to
   // recording and sending the audio, and remember that choice.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null;
+  if (safeGet("jarvis-stt-v") !== "2") { safeSet("jarvis-stt", ""); safeSet("jarvis-stt-v", "2"); } // retry after a fix
+  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null, srCaptureFails = 0;
+
+  // Diagnostics: what the microphone is doing, in Jarvis's log (/logs), to fix problems remotely.
+  function diag(event, data = {}) {
+    try { fetch("/api/diag", { method: "POST", headers: { "X-Jarvis-Token": token, "Content-Type": "application/json" },
+      body: JSON.stringify({ event, ...data }) }).catch(() => {}); } catch {}
+  }
 
   function stopSR() {
     clearInterval(srTimer); srTimer = null;
-    if (rec) { const r = rec; rec = null; r.onend = r.onresult = r.onerror = null; try { r.abort(); } catch {} }
+    if (rec) { const r = rec; rec = null; r.onend = r.onresult = r.onerror = r.onaudiostart = null; try { r.abort(); } catch {} }
   }
   function listenOnPhone() {
     setState("listening"); userTalking = false;
@@ -381,11 +393,18 @@
       if (!document.body.classList.contains("voice")) statusEl.textContent = text;
       orb.style.setProperty("--level", 0.45 + Math.random() * 0.25);
     };
+    let audioStarted = false;
+    rec.onaudiostart = () => { audioStarted = true; srCaptureFails = 0; };
     rec.onerror = (e) => {
-      if (["not-allowed", "service-not-allowed", "audio-capture"].includes(e.error)) {
+      diag("sr-error", { error: e.error });
+      if (["not-allowed", "service-not-allowed"].includes(e.error)) {   // the phone refuses: remember
         stopSR(); useSR = false; safeSet("jarvis-stt", "server");
         add("sys", "Using the server for speech recognition (the phone's own isn't available here).");
         listen();
+      } else if (e.error === "audio-capture") {   // usually the speaker hadn't let go of the audio yet
+        done = true; stopSR();
+        if (++srCaptureFails >= 3) { useSR = false; diag("sr-fallback", { reason: "audio-capture x3" }); }
+        setTimeout(listen, 600);
       }
     };
     rec.onend = () => {   // iPhone stops listening on its own now and then: carry on
@@ -397,6 +416,10 @@
         done = true; stopSR(); sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
         done = true; stopSR(); listen();
+      } else if (!audioStarted && now - started > 4000) {         // the mic never came on: try again
+        done = true; stopSR(); diag("sr-no-audio", { fails: srCaptureFails + 1 });
+        if (++srCaptureFails >= 3) useSR = false;                   // this time, record instead
+        setTimeout(listen, 400);
       }
     }, 100);
     try { rec.start(); } catch (e) { stopSR(); useSR = false; listen(); }
@@ -421,18 +444,32 @@
   async function listen() {
     if (!conversation) return;
     if (useSR) return listenOnPhone();
+    if (stream && (stream.__stale || stream.getAudioTracks().every(t => t.readyState === "ended"))) {
+      stream.getTracks().forEach(t => t.stop()); stream = null;   // the old device went away
+    }
     try { if (!stream) await openMic(); }
     catch (e) { conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return; }
     setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
     const calibrateUntil = performance.now() + 400;
+    let peak = 0;
+    const levelLog = setInterval(() => {   // input levels, for /logs
+      if (!vadTimer) return clearInterval(levelLog);
+      diag("mic-level", { noise: +noiseFloor.toFixed(4), peak: +peak.toFixed(4), speaking: !!speechStart,
+        track: stream?.getAudioTracks()[0]?.label || "", muted: !!stream?.getAudioTracks()[0]?.muted });
+      peak = 0;
+    }, 5000);
     vadTimer = setInterval(() => {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0; for (const v of buf) sum += v * v;
       const rms = Math.sqrt(sum / buf.length), now = performance.now();
-      if (now < calibrateUntil) { noiseFloor = Math.max(0.004, noiseFloor * 0.7 + rms * 0.3); return; }
-      const threshold = Math.max(noiseFloor * 3, 0.02);
+      if (now < calibrateUntil) { noiseFloor = Math.max(0.002, noiseFloor * 0.7 + rms * 0.3); return; }
+      if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
+      peak = Math.max(peak, rms);
+      // The phone's own mic (echo-cancelled, at arm's length) is far quieter than AirPods: a fixed
+      // 0.02 never triggered on it. Speech = clearly above this room's noise.
+      const threshold = Math.max(noiseFloor * 2.5, 0.006);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
       if (speechStart && now - lastLoud > 1500) {                // a 1.5-second pause: they've finished
@@ -531,10 +568,12 @@
     if (!data.reply) return;
     setState("speaking");
     await speak(data);
+    await new Promise(r => setTimeout(r, 350));   // on the loudspeaker, iPhone needs a moment to hand the mic back
   }
 
   // ---------- conversation control ----------
   async function startConversation() {
+    diag("start", { mode: useSR ? "phone-recognition" : "recording", ua: navigator.userAgent.slice(0, 120) });
     unlockAudio();
     conversation = true;
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}

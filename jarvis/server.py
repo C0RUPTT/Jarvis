@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import hmac
+import json
 import os
 import re
 import threading
@@ -562,6 +563,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if talking:
             announcer.web_talking_until = time.time() + 15
         return {"events": announcer.events_since(after)}
+
+    @app.post("/api/diag")
+    def diag(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
+        """Microphone diagnostics from the web app (levels, recognition errors), printed for /logs."""
+        check(x_jarvis_token)
+        print(f"[web mic] {json.dumps(payload)[:400]}")
+        return {"ok": True}
 
     @app.post("/api/voice")
     def voice(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
