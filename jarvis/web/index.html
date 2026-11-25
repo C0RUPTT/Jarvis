@@ -241,7 +241,7 @@
       const chip = $("linkChip"); chip.href = link; chip.textContent = (text || "Open") + " ↗"; chip.hidden = false;
       setTimeout(() => { chip.hidden = true; }, 60000);
     }
-    if (kind === "sys" && document.body.classList.contains("voice") && /⚠|Using the server/.test(text)) {
+    if (kind === "sys" && document.body.classList.contains("voice") && /⚠|Using the server|Weak signal/.test(text)) {
       const t = $("toast"); if (t) { t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 4000); }
     }
     const div = document.createElement("div");
@@ -385,7 +385,7 @@
   // recording and sending the audio, and remember that choice.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (safeGet("jarvis-stt-v") !== "2") { safeSet("jarvis-stt", ""); safeSet("jarvis-stt-v", "2"); } // retry after a fix
-  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null, srCaptureFails = 0;
+  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null, srCaptureFails = 0, srNetworkFails = 0;
 
   // Diagnostics: what the microphone is doing, in Jarvis's log (/logs), to fix problems remotely.
   function diag(event, data = {}) {
@@ -422,6 +422,12 @@
         stopSR(); useSR = false; safeSet("jarvis-stt", "server");
         add("sys", "Using the server for speech recognition (the phone's own isn't available here).");
         listen();
+      } else if (e.error === "network") {   // weak signal: the phone's recognition needs Apple's servers
+        done = true; stopSR();
+        if (++srNetworkFails >= 2) { useSR = false; diag("sr-fallback", { reason: "network" });
+          setTimeout(() => { useSR = !!SR && safeGet("jarvis-stt") !== "server"; srNetworkFails = 0; }, 300000); // retry later
+          add("sys", "Weak signal: recording instead of live recognition for now."); }
+        setTimeout(listen, 800);
       } else if (e.error === "audio-capture") {   // usually the speaker hadn't let go of the audio yet
         done = true; stopSR();
         if (++srCaptureFails >= 3) { useSR = false; diag("sr-fallback", { reason: "audio-capture x3" }); }
@@ -713,6 +719,27 @@
   };
 
   // ---------- things Jarvis says on its own (timers, reminders, phone actions) ----------
+  let handledEvents = new Set();
+  try { handledEvents = new Set(JSON.parse(safeGet("jarvis-events") || "[]")); } catch {}
+  // Inside the home-screen app, a normal web link opens in a little browser that never hands off
+  // to the app ("Don't have Waze yet?"). App links (waze://, youtube://...) open the real app.
+  function appLink(url) {
+    try {
+      const u = new URL(url);
+      if (/(^|\.)waze\.com$/.test(u.hostname) && u.pathname.startsWith("/ul")) return "waze://" + u.search;
+      if (/(^|\.)youtube\.com$/.test(u.hostname) && u.pathname === "/watch") return "youtube://watch" + u.search;
+      if (u.hostname === "youtu.be") return "youtube://watch?v=" + u.pathname.slice(1);
+      if (u.hostname === "maps.apple.com") return "maps://" + u.search;
+      if (/(^|\.)spotify\.com$/.test(u.hostname)) return "spotify:" + u.pathname.slice(1).replace(/\//g, ":");
+    } catch {}
+    return url;
+  }
+  function openApp(url) {
+    const target = appLink(url);
+    diag("open", { url: target.slice(0, 80) });
+    if (/^https?:/.test(target)) { const w = window.open(target, "_blank"); if (!w) location.href = target; }
+    else location.href = target;   // an app: iPhone switches to it; this page stays as it is
+  }
   const announcements = [];
   let announcing = false, userTalking = false;
   async function poll() {
@@ -722,12 +749,16 @@
       for (const ev of events) {
         if (lastEventId === 0 && Date.now() / 1000 - ev.time > 60) { lastEventId = ev.id; continue; } // stale
         lastEventId = Math.max(lastEventId, ev.id);
+        // iPhone often reloads the page after you switch apps; without this every recent "open"
+        // ran again on each reload (the same app opening over and over).
+        if (handledEvents.has(ev.id)) continue;
+        handledEvents.add(ev.id); safeSet("jarvis-events", JSON.stringify([...handledEvents].slice(-50)));
         if (ev.type === "say") {
           add("jarvis", ev.text);
           announcements.push(ev.text);
         } else if (ev.type === "open") {
           add("jarvis", ev.text, ev.url);
-          try { location.href = ev.url; } catch {}
+          if (Date.now() / 1000 - ev.time < 30) openApp(ev.url);   // only fresh requests, once
         }
       }
     } catch {}
