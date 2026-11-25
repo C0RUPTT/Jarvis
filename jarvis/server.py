@@ -604,7 +604,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         # Siri gives up on a step that takes ~10 seconds.
         # Siri ends a Shortcut that runs about 10 seconds without hearing from you, and the
         # question, "One moment" and this wait all count. So: one short wait, then hand back.
-        deadline = time.time() + float(os.getenv("JARVIS_SIRI_WAIT", "4"))
+        deadline = time.time() + float(os.getenv("JARVIS_SIRI_WAIT", "3"))
         while time.time() < deadline:
             ready = _take_finished() + rt.take_siri_inbox()
             if ready:
