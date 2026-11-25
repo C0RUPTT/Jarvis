@@ -4,6 +4,7 @@
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
+    /shortcut the exact links to paste into the iPhone Shortcuts
     /help     list of commands
 """
 
@@ -83,11 +84,38 @@ def logs() -> str:
     return "Couldn't read the log (no permission)."
 
 
+def shortcut(config) -> str:
+    """Ready-to-paste links (token included) for the Siri Shortcut and the alarm automation."""
+    import json
+
+    host = "<your-server>.ts.net"
+    tailscale = shutil.which("tailscale")
+    if tailscale:
+        code, out = _run([tailscale, "status", "--json"], timeout=15)
+        try:
+            host = json.loads(out)["Self"]["DNSName"].rstrip(".")
+        except (ValueError, KeyError):
+            pass
+    base = f"https://{host}"
+    return (
+        "Siri Shortcut (3 actions):\n"
+        "1. Dictate Text\n"
+        "2. Get Contents of URL - paste the link below, Method POST, Request Body JSON, "
+        "add a Text field: key  text  value  Dictated Text\n"
+        "3. Speak Text - Contents of URL\n\n"
+        f"{base}/api/ask?format=text&token={config.token}\n\n"
+        "Alarm automation (Alarm > Is Stopped > Run Immediately): Get Contents of URL, Method POST, "
+        "then Speak Text:\n\n"
+        f"{base}/api/wake?token={config.token}"
+    )
+
+
 def commands(config, jobs) -> dict:
     return {
         "status": lambda: status(config, jobs),
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
+        "shortcut": lambda: shortcut(config),
         "help": lambda: __doc__.strip(),
     }

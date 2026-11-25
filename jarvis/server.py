@@ -97,9 +97,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         payload: dict = Body(...),
         x_jarvis_token: str | None = Header(None),
         format: str = Query("json"),
+        token: str | None = Query(None),
     ):
-        """Text in, text out. format=text is for the Siri Shortcut: plain text, always fast."""
-        check(x_jarvis_token or payload.get("token"))
+        """Text in, text out. format=text is for the Siri Shortcut: plain text, always fast.
+        The token can be a header, a JSON field, or ?token= in the URL (simplest in Shortcuts)."""
+        check(x_jarvis_token or token or payload.get("token"))
         text = str(payload.get("text", "")).strip()
         if not text:
             raise HTTPException(status_code=400, detail="No text")
@@ -113,10 +115,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         return respond(rt.ask(text), heard=text, with_audio=bool(payload.get("audio", True)))
 
     @app.post("/api/wake")
-    def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
+    def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
+             token: str | None = Query(None)):
         """Called by the iPhone wake-up automation: ends night mode and returns the overnight summary
         as plain text, ready for the Shortcut to speak."""
-        check(x_jarvis_token or payload.get("token"))
+        check(x_jarvis_token or token or payload.get("token"))
         return PlainTextResponse(clean_for_speech(rt.morning()))
 
     @app.post("/api/reset")
