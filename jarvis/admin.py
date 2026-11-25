@@ -8,7 +8,7 @@
     /timezone set your time zone, e.g. /timezone America/New_York
     /notifysetup  public link so Claude Code can tell Jarvis when it's done
     /github <key> connect your GitHub so Jarvis can work on your projects
-    /textsetup    spoken alerts by text message (see docs/SPOKEN_TEXTS.md); /texttest, /textoff
+    /textsetup    spoken alerts by text message (see docs/SPOKEN_TEXTS.md); /texttest, /textalt, /textoff
     /help     list of commands
 """
 
@@ -255,6 +255,7 @@ def commands(config, jobs, brain=None) -> dict:
         "texttest": lambda: (lambda sms: (sms.send("This is a test. Say hi back, sir.") or "Test text sent.")
                              if sms.configured() else "Spoken texts aren't set up; use /textsetup.")(
                                  __import__("jarvis.sms", fromlist=["x"])),
+        "textalt": lambda: __import__("jarvis.sms", fromlist=["x"]).switch_gateway(ROOT / ".env"),
         "textoff": lambda: __import__("jarvis.sms", fromlist=["x"]).disable(ROOT / ".env"),
         "help": lambda: __doc__.strip(),
     }

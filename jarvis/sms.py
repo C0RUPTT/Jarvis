@@ -18,7 +18,7 @@ import threading
 from email.message import EmailMessage
 from pathlib import Path
 
-CARRIER_GATEWAYS = {"verizon": "vtext.com"}
+CARRIER_GATEWAYS = {"verizon": "vtext.com", "verizon-mms": "vzwpix.com"}
 PREFIX = "Jarvis: "
 
 
@@ -82,6 +82,24 @@ def setup(arg: str, env_file: Path) -> str:
     return ("Test text sent to your phone. It can take a minute through Verizon. If it arrives, set up "
             "the speaking automation (docs/SPOKEN_TEXTS.md). If nothing arrives within 5 minutes, "
             "Verizon may be blocking it; send /textoff and we'll stick with Telegram.")
+
+
+def switch_gateway(env_file: Path) -> str:
+    """/textalt: try Verizon's picture-message gateway (vzwpix.com) instead of vtext.com."""
+    to = os.getenv("JARVIS_SMS_TO", "")
+    if "@" not in to:
+        return "Spoken texts aren't set up yet; use /textsetup first."
+    number, domain = to.split("@", 1)
+    new_domain = "vzwpix.com" if domain == "vtext.com" else "vtext.com"
+    os.environ["JARVIS_SMS_TO"] = f"{number}@{new_domain}"
+    error = send(f"Test via {new_domain}. If this arrived, set up the speaking automation.")
+    if error:
+        os.environ["JARVIS_SMS_TO"] = to
+        return f"Sending through {new_domain} failed: {error}"
+    lines = [l for l in env_file.read_text().splitlines() if not l.startswith("JARVIS_SMS_TO=")]
+    env_file.write_text("\n".join(lines + [f"JARVIS_SMS_TO={number}@{new_domain}"]) + "\n")
+    return (f"Switched to {new_domain} and sent a test text. Give it a few minutes. If this one doesn't "
+            "arrive either, Verizon is blocking email-to-text for us; send /textoff.")
 
 
 def disable(env_file: Path) -> str:
