@@ -140,14 +140,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         return {"ok": True, "user_name": config.user_name, "brain": config.brain,
                 "telegram": rt.telegram is not None, "mode": announcer.mode}
 
-    @app.post("/api/talk")
-    def talk(audio: UploadFile = File(...), x_jarvis_token: str | None = Header(None)):
-        """Voice in, voice out: the phone web app sends a recording, gets back text + speech."""
-        check(x_jarvis_token)
-        suffix = ".mp4" if "mp4" in (audio.content_type or "") else ".webm"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-            f.write(audio.file.read())
-            path = f.name
+    talks: dict[str, dict] = {}   # async web-app turns: id -> {"status", "result", "done_at", "fetched"}
+    talks_lock = threading.Lock()
+
+    def _process_talk(path: str) -> dict:
         try:
             heard = rt.transcribe(path)
         finally:
@@ -156,6 +152,59 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if len(heard.strip(" .!?,")) < 2:
             return {"heard": "", "reply": "", "speech": "", "audio": None}
         return respond(rt.ask(heard), heard=heard)
+
+    def _finish_talk(talk_id: str, future) -> None:
+        try:
+            result = future.result()
+        except Exception as e:  # noqa: BLE001
+            result = {"heard": "", "reply": f"Sorry, that failed: {e}", "speech": "", "audio": None}
+        with talks_lock:
+            talks[talk_id].update(status="done", result=result, done_at=time.time())
+
+        def unclaimed():   # the app was closed or frozen: send the answer to Telegram instead
+            with talks_lock:
+                item = talks.get(talk_id)
+                if not item or item["fetched"]:
+                    return
+                item["fetched"] = True
+            if result.get("reply"):
+                announcer.announce(f"You asked: \"{result.get('heard', '')[:80]}\"\n{result['reply']}", reply=True)
+        threading.Timer(45, unclaimed).start()
+
+    @app.post("/api/talk")
+    def talk(audio: UploadFile = File(...), x_jarvis_token: str | None = Header(None),
+             wait: bool = Query(True)):
+        """Voice in, voice out. wait=false (the web app): returns an id straight away and keeps
+        working even if the app is swiped away; collect it from GET /api/talk/{id}."""
+        check(x_jarvis_token)
+        suffix = ".mp4" if "mp4" in (audio.content_type or "") else ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(audio.file.read())
+            path = f.name
+        if wait:
+            return _process_talk(path)
+        import secrets as _secrets
+
+        talk_id = _secrets.token_urlsafe(8)
+        with talks_lock:
+            for old in [k for k, v in talks.items() if time.time() - v["created"] > 3600]:
+                talks.pop(old)
+            talks[talk_id] = {"status": "working", "result": None, "created": time.time(), "fetched": False}
+        future = pool.submit(_process_talk, path)
+        future.add_done_callback(lambda f: _finish_talk(talk_id, f))
+        return {"id": talk_id}
+
+    @app.get("/api/talk/{talk_id}")
+    def talk_result(talk_id: str, x_jarvis_token: str | None = Header(None)):
+        check(x_jarvis_token)
+        with talks_lock:
+            item = talks.get(talk_id)
+            if not item:
+                raise HTTPException(status_code=404, detail="Unknown or expired request")
+            if item["status"] != "done":
+                return {"status": "working"}
+            item["fetched"] = True
+            return {"status": "done", **item["result"]}
 
     @app.post("/api/ask")
     def ask(
@@ -168,7 +217,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         The token can be a header, a JSON field, or ?token= in the URL (simplest in Shortcuts)."""
         check(x_jarvis_token or token or payload.get("token"))
         text = str(payload.get("text", "")).strip()
-        if not text:
+        if not text:   # Siri heard nothing: an error here would make the Shortcut quit
+            nothing = "Sorry, I didn't catch that. Go ahead."
+            if format == "siri":
+                return {"say": nothing}
+            if format == "text":
+                return PlainTextResponse(nothing)
             raise HTTPException(status_code=400, detail="No text")
         print(f"\nYou: {text}")
         if format == "siri":

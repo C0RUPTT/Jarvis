@@ -272,9 +272,12 @@
     analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
     src.connect(analyser);
   }
-  function closeMic() {   // release the mic while Jarvis talks, so iPhone audio uses the loudspeaker
+  function pauseMic() {   // stop listening but keep the mic open: reopening it makes iPhone ask permission again
     clearInterval(vadTimer); vadTimer = null;
     if (recorder && recorder.state !== "inactive") { recorder.onstop = null; recorder.stop(); }
+  }
+  function closeMic() {   // only when the conversation ends
+    pauseMic();
     stream?.getTracks().forEach(t => t.stop()); stream = null;
   }
 
@@ -315,20 +318,47 @@
     }, 50);
   }
 
+  // The answer is collected separately, so it survives the app being swiped away: the server keeps
+  // working, and when you come back the answer is waiting (or it arrives on Telegram after 45s).
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  function savePending(id) { try { id ? localStorage.setItem("jarvis-pending", id) : localStorage.removeItem("jarvis-pending"); } catch {} }
+  async function collect(id) {
+    for (let i = 0; i < 400; i++) {                     // up to ~7 minutes
+      if (document.visibilityState === "visible") {
+        try {
+          const r = await api("/api/talk/" + id);
+          if (r.status === "done") { savePending(null); return r; }
+        } catch (e) {
+          if (/Unknown or expired|404/.test(e.message)) { savePending(null); return null; }
+        }
+      }
+      await sleep(1000);
+    }
+    return null;
+  }
   async function send(blob) {
-    closeMic();
+    pauseMic();
     setState("thinking");
     const form = new FormData();
     form.append("audio", blob, mime.includes("mp4") ? "speech.mp4" : "speech.webm");
     try {
-      const data = await api("/api/talk", { method: "POST", body: form });
-      if (!data.heard) return listen();                // nothing intelligible: keep listening
+      const { id } = await api("/api/talk?wait=false", { method: "POST", body: form });
+      savePending(id);
+      const data = await collect(id);
+      if (!data || !data.heard) return listen();        // nothing intelligible: keep listening
       add("you", data.heard);
       await reply(data);
       if (GOODBYE.test(data.heard)) return endConversation();
     } catch (e) { add("sys", "⚠ " + e.message); }
     listen();
   }
+  // Opened the app again after it was closed mid-answer? Pick the answer up.
+  (async () => {
+    let id = null; try { id = localStorage.getItem("jarvis-pending"); } catch {}
+    if (!id || !token) return;
+    const data = await collect(id);
+    if (data && data.heard) { add("you", data.heard); if (data.reply) add("jarvis", data.reply); }
+  })();
 
   async function reply(data) {
     if (data.reply) add("jarvis", data.reply);
@@ -359,7 +389,7 @@
     e.preventDefault();
     const text = $("text").value.trim(); if (!text) return;
     $("text").value = ""; unlockAudio();
-    const wasTalking = conversation; if (wasTalking) { conversation = false; closeMic(); }
+    const wasTalking = conversation; if (wasTalking) { conversation = false; pauseMic(); }
     add("you", text); setState("thinking");
     try { await reply(await api("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }) })); }
