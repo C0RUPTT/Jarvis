@@ -89,7 +89,7 @@ class Config:
             ntfy_topic=os.getenv("JARVIS_NTFY_TOPIC", ""),
             telegram_token=os.getenv("JARVIS_TELEGRAM_TOKEN", ""),
             telegram_user_id=os.getenv("JARVIS_TELEGRAM_USER_ID", ""),
-            siri_budget=float(os.getenv("JARVIS_SIRI_BUDGET", "8")),  # Siri gives up at ~10s
+            siri_budget=float(os.getenv("JARVIS_SIRI_BUDGET", "6")),  # Siri gives up ~10s without hearing you
             quiet_start=os.getenv("JARVIS_QUIET_START", "23:00"),
             unsafe_no_confirm=_env_bool("JARVIS_UNSAFE_NO_CONFIRM"),
         )

@@ -39,8 +39,9 @@ STANDBY = re.compile(r"^(ok(ay)?|alright|all right|thanks?( you)?|thank you|cool
                      r"(bye|bye[- ]bye|by|buy|good ?-?bye|good ?night|see (ya|you)( later)?|talk (to you )?later|that'?s (all|it)|that will be all|i'?m (done|good|all set|finished)|i am (done|finished)|we'?re (done|good)|done (talking|for now)|nothing( else)?|no thanks?|stop listening|go to sleep|(go (to |on )?)?standby|sleep|dismissed|over and out)"
                      r"( for now| jarvis| thanks?| thank you| sir| then)*[.!?]*$", re.I)
 FAREWELLS = ["Goodbye, sir.", "Very good, sir.", "I'll be here.", "Until next time, sir.", "Right you are, sir."]
-READY_CHECK = re.compile(r"^(is it |are you )?(ready|done|finished)( yet)?\??$|^(go on|and\??|well\??|still there\??|"
-                         r"what did you find\??|any luck\??)$", re.I)
+READY_CHECK = re.compile(r"^(ok(ay)?,? |yes,? |yeah,? )?((is it |are you )?(ready|done|finished)( yet)?|go on|go ahead|"
+                         r"continue|carry on|and|well|still there|what did you find|any luck|tell me|let'?s hear it)"
+                         r"( then| please| jarvis)?[.?!]*$", re.I)
 
 
 def create_app(config: Config, speak_on_laptop: bool = False):
@@ -153,7 +154,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         at the start of your next Siri turn, or sent to Telegram if the conversation has ended."""
         rt.last_siri = time.time()
         earlier = _take_finished() + rt.take_siri_inbox()
-        if READY_CHECK.match(text.strip(" .!")):
+        with pending_lock:
+            anything_pending = any(not p["delivered"] for p in pending)
+        # "Go on" / "is it ready?" waits for a pending answer; with nothing pending, "go ahead" is just
+        # an ordinary reply (e.g. agreeing to something), so it goes to Claude as usual.
+        if READY_CHECK.match(text.strip(" .!")) and (anything_pending or earlier or rt.active_awaiting()):
             with pending_lock:
                 waiting = [p for p in pending if not p["delivered"]]
             if waiting and not earlier:   # wait (within budget) for the oldest unfinished answer
@@ -168,7 +173,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 return " ".join(earlier)
             if rt.active_awaiting():
                 return "The session is still working on it. Ask me again in a moment."
-            return "Still on it. Give me another moment." if waiting else "Nothing pending; ask away."
+            return "Still on it, sir. Say go on again in a moment." if waiting else "Nothing pending; ask away."
 
         if earlier and any(_similar(q, text) for _, q in recently_answered):
             return " ".join(earlier)   # the answer to this very question just arrived: don't ask twice
@@ -445,10 +450,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             # Only include "open" when there is a link: Shortcuts counts an empty string as
             # "has any value" and would try to open it.
             result = {"say": reply}
-            with pending_lock:
-                still_pending = any(not p["delivered"] for p in pending)
-            if reply == clean_for_speech(STILL_WORKING) or still_pending or rt.active_awaiting():
-                result["wait"] = "yes"   # the Shortcut calls /api/wait and speaks the answer when ready
+            # The Shortcut then calls /api/wait and speaks the answer when ready. Only right after a
+            # quick "One moment" / "Sent to your session": a longer chain makes Siri give up.
+            if reply == clean_for_speech(STILL_WORKING) or (reply.startswith("Sent to your") and rt.active_awaiting()):
+                result["wait"] = "yes"
             late_link = announcer.take_recent_open()
             if opens:
                 result["open"] = opens[-1]["url"]
@@ -486,7 +491,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             return {"say": "This one's taking a while, sir. I'll send it to your phone when it's ready. Anything else?"}
         # Shorter than a normal turn: this call comes right after Siri spoke "One moment", and
         # Siri gives up on a step that takes ~10 seconds.
-        deadline = time.time() + min(config.siri_budget, 6)
+        # Siri ends a Shortcut that runs about 10 seconds without hearing from you, and the
+        # question, "One moment" and this wait all count. So: one short wait, then hand back.
+        deadline = time.time() + float(os.getenv("JARVIS_SIRI_WAIT", "4"))
         while time.time() < deadline:
             ready = _take_finished() + rt.take_siri_inbox()
             if ready:
@@ -503,7 +510,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if not waiting and not rt.active_awaiting():
                 return {"say": "Anything else, sir?"}
             time.sleep(0.4)
-        return {"say": "Still working on it, sir.", "wait": "yes"}
+        # Not ready: let Siri listen again (that keeps it alive). "Go on" waits for the answer again.
+        return {"say": "Still working on it, sir. Say go on to hear it, or ask me something else."}
 
     @app.post("/api/wake")
     def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
