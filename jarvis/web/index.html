@@ -385,10 +385,15 @@
   // If the phone refuses (some iOS versions block it in home-screen apps), we fall back to
   // recording and sending the audio, and remember that choice.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (safeGet("jarvis-stt-v") !== "3") { safeSet("jarvis-stt", ""); safeSet("jarvis-stt-v", "3"); } // retry after a fix
+  // Listening mode. Default: record your voice and let Jarvis's server turn it into text. It's the
+  // version that worked reliably, and the orb follows your voice live. The iPhone's own live
+  // recognition looked faster on paper but was laggy and unreliable in a web app (late, replayed
+  // and dropped results, no live level for the orb), so it's opt-in only: type "phone listening"
+  // in the text box to try it, "server listening" to go back.
+  if (safeGet("jarvis-stt-v") !== "4") { safeSet("jarvis-stt", "server"); safeSet("jarvis-stt-v", "4"); }
   let lastTap = 0;
   document.addEventListener("pointerdown", () => { lastTap = Date.now(); }, true);
-  let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null, srCaptureFails = 0, srNetworkFails = 0;
+  let useSR = !!SR && safeGet("jarvis-stt") === "phone", rec = null, srTimer = null, srCaptureFails = 0, srNetworkFails = 0;
 
   // Diagnostics: what the microphone is doing, in Jarvis's log (/logs), to fix problems remotely.
   function diag(event, data = {}) {
@@ -444,7 +449,7 @@
       } else if (e.error === "network") {   // weak signal: the phone's recognition needs Apple's servers
         done = true; stopSR();
         if (++srNetworkFails >= 2) { useSR = false; diag("sr-fallback", { reason: "network" });
-          setTimeout(() => { useSR = !!SR && safeGet("jarvis-stt") !== "server"; srNetworkFails = 0; }, 300000); // retry later
+          setTimeout(() => { useSR = !!SR && safeGet("jarvis-stt") === "phone"; srNetworkFails = 0; }, 300000); // retry later
           add("sys", "Weak signal: recording instead of live recognition for now."); }
         setTimeout(listen, 800);
       } else if (e.error === "audio-capture") {   // usually the speaker hadn't let go of the audio yet
@@ -535,7 +540,7 @@
       const threshold = Math.max(noiseFloor * 2.5, 0.006);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
-      if (speechStart && now - lastLoud > 1500) {                // a 1.5-second pause: they've finished
+      if (speechStart && now - lastLoud > 1200) {                // a 1.2-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
@@ -730,6 +735,10 @@
   $("chat").onsubmit = async (e) => {
     e.preventDefault();
     const text = $("text").value.trim(); if (!text) return;
+    if (/^(phone|server) listening$/i.test(text)) {
+      const phone = /^phone/i.test(text); safeSet("jarvis-stt", phone ? "phone" : "server"); useSR = phone && !!SR;
+      $("text").value = ""; add("sys", phone ? "Listening with the iPhone's own recognition." : "Listening by recording (default)."); return;
+    }
     $("text").value = ""; unlockAudio();
     const wasTalking = conversation; if (wasTalking) { conversation = false; pauseMic(); }
     add("you", text); setState("thinking");
