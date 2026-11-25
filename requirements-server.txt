@@ -9,5 +9,6 @@ python-multipart>=0.0.9
 edge-tts>=7.0
 numpy>=1.26
 faster-whisper>=1.2
+av>=11,<19            # av 19 removed an option faster-whisper uses (voice notes fail)
 psutil>=5.9
 caldav>=2.0

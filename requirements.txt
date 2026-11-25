@@ -16,6 +16,7 @@ edge-tts>=7.0          # free natural-sounding voice for the phone (needs intern
 # Voice (speech-to-text runs locally; wake word + speakers for laptop voice mode)
 numpy>=1.26
 faster-whisper>=1.2
+av>=11,<19            # av 19 removed an option faster-whisper uses
 sounddevice>=0.4.6
 openwakeword>=0.6
 pyttsx3>=2.98
