@@ -81,7 +81,14 @@ class Runtime:
         items = "; ".join(line.split(": ", 1)[-1].split(" [")[0] if ": " in line else line for line in lines[:5])
         times = [line.split(": ", 1)[0].split(" ")[-1] for line in lines[:5]]
         def say_time(t: str) -> str:
-            return t.split("-")[0].lstrip("0")   # "09:30-10:00" -> "9:30"
+            start = t.split("-")[0]                 # "14:30-15:00" -> "2:30 PM"
+            try:
+                hour, minute = (int(x) for x in start.split(":"))
+            except ValueError:
+                return start
+            suffix = "AM" if hour < 12 else "PM"
+            hour = hour % 12 or 12
+            return f"{hour} {suffix}" if minute == 0 else f"{hour}:{minute:02d} {suffix}"
 
         spoken = "; ".join(
             (f"{say_time(t)} {i}" if t[:1].isdigit() else i).replace(" @ ", " at ")
