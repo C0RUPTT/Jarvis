@@ -4,9 +4,13 @@
 # Run it on the server with ONE paste:
 #   curl -fsSL https://raw.githubusercontent.com/C0RUPTT/Jarvis/claude/zen-keller-np4wum/scripts/install-server.sh | bash
 #
-# Safe to run again: finished steps are skipped. It asks for your Telegram and iCloud details,
-# and sends every login link to your Telegram so you can tap it on your phone instead of copying
-# it out of the terminal.
+# Short version to type on a phone (no pasting needed):
+#   curl -sL raw.githubusercontent.com/C0RUPTT/Jarvis/HEAD/setup|bash
+#
+# Safe to run again: finished steps are skipped. Your Telegram and iCloud details are read from
+# the server's Google Cloud "custom metadata" (a normal web form, see docs/GOOGLE_CLOUD.md) or
+# asked for in the terminal. Login links are sent to your Telegram, and you can reply there with
+# any code the login asks for, so nothing has to be pasted into the terminal.
 set -euo pipefail
 
 REPO="https://github.com/C0RUPTT/Jarvis.git"
@@ -21,6 +25,17 @@ env_get() { [ -f "$ENV_FILE" ] && grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d=
 env_set() {
   touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
   if grep -qE "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+meta() {      # Google Cloud custom metadata (set in the console: VM > Edit > Metadata)
+  curl -fs -m 3 -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1" 2>/dev/null || true
+}
+from_meta_or_ask() {  # $1 = .env key, $2 = metadata key, $3 = prompt ('' = optional, skip if missing)
+  [ -n "$(env_get "$1")" ] && return 0
+  local v; v="$(meta "$2")"
+  if [ -z "$v" ] && [ -n "$3" ]; then v="$(ask "$3")"; fi
+  [ -n "$v" ] && env_set "$1" "$v"
+  return 0
 }
 tg_send() {   # send a message (e.g. a login link) to the owner's Telegram
   local token user; token="$(env_get JARVIS_TELEGRAM_TOKEN)"; user="$(env_get JARVIS_TELEGRAM_USER_ID)"
@@ -50,13 +65,14 @@ cd "$DIR"
 .venv/bin/pip install -q -r requirements-server.txt
 echo "ok"
 
-bold "4/8 Your details (paste from Notes: long-press in the terminal, then Paste)"
+bold "4/8 Your details (from the VM's custom metadata, or typed here)"
 [ -n "$(env_get JARVIS_USER_NAME)" ] || env_set JARVIS_USER_NAME sir
-if [ -z "$(env_get JARVIS_TELEGRAM_TOKEN)" ]; then env_set JARVIS_TELEGRAM_TOKEN "$(ask 'Telegram bot token (from @BotFather): ')"; fi
-if [ -z "$(env_get JARVIS_TELEGRAM_USER_ID)" ]; then env_set JARVIS_TELEGRAM_USER_ID "$(ask 'Your Telegram user ID (from @userinfobot): ')"; fi
-if [ -z "$(env_get JARVIS_ICLOUD_USER)" ]; then
-  v="$(ask 'Apple ID email for Apple Calendar (Enter to skip): ')"; [ -n "$v" ] && env_set JARVIS_ICLOUD_USER "$v"
-  if [ -n "$v" ]; then env_set JARVIS_ICLOUD_APP_PASSWORD "$(ask 'Apple app-specific password: ')"; fi
+from_meta_or_ask JARVIS_TELEGRAM_TOKEN   jarvis-telegram-token   'Telegram bot token (from @BotFather): '
+from_meta_or_ask JARVIS_TELEGRAM_USER_ID jarvis-telegram-user-id 'Your Telegram user ID (from @userinfobot): '
+from_meta_or_ask JARVIS_ICLOUD_USER         jarvis-icloud-user     ''
+from_meta_or_ask JARVIS_ICLOUD_APP_PASSWORD jarvis-icloud-password ''
+if [ -z "$(env_get JARVIS_TELEGRAM_TOKEN)" ] || [ -z "$(env_get JARVIS_TELEGRAM_USER_ID)" ]; then
+  echo "Telegram details are missing. Add them as metadata (docs/GOOGLE_CLOUD.md) and run again."; exit 1
 fi
 # Server profile: small-memory friendly defaults.
 env_set JARVIS_BRAIN claude-code
@@ -75,9 +91,9 @@ if ! command -v claude >/dev/null; then curl -fsSL https://claude.ai/install.sh 
 grep -q '.local/bin' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 claude_ok() { claude auth status 2>/dev/null | grep -q '"loggedIn": *true'; }
 if ! claude_ok; then
-  echo "Log in with your Claude Pro account. The login link is also sent to your Telegram."
-  echo "After approving in the browser, paste the code shown there back here if asked."
-  .venv/bin/python scripts/relay_links.py claude auth login </dev/tty
+  echo "Log in with your Claude Pro account. The login link is sent to your Telegram."
+  echo "If the login page shows a code, send that code to your bot in Telegram; it's typed in here for you."
+  .venv/bin/python scripts/relay_links.py --reply claude auth login </dev/tty
 fi
 claude_ok && echo "ok: Claude Code is logged in" || { echo "Claude login didn't finish. Run this installer again."; exit 1; }
 mkdir -p "$HOME/jarvis-projects"

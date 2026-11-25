@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Short entry point for phones. On the server, type:
+#   curl -sL raw.githubusercontent.com/C0RUPTT/Jarvis/HEAD/setup|bash
+set -e
+curl -fsSL https://raw.githubusercontent.com/C0RUPTT/Jarvis/HEAD/scripts/install-server.sh -o /tmp/jarvis-install.sh
+bash /tmp/jarvis-install.sh
