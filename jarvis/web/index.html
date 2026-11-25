@@ -400,6 +400,7 @@
     clearInterval(srTimer); srTimer = null;
     if (rec) { const r = rec; rec = null; r.onend = r.onresult = r.onerror = r.onaudiostart = null; try { r.abort(); } catch {} }
   }
+  let lastSent = { text: "", at: 0 }, recentSent = [];
   function listenOnPhone() {
     setState("listening"); userTalking = false;
     let text = "", lastHeard = 0, done = false, audioStarted = false;
@@ -413,6 +414,14 @@
         const t = e.results[i][0].transcript.trim();
         // Some iPhones repeat the whole sentence in each result: replace instead of appending.
         joined = t.toLowerCase().startsWith(joined.toLowerCase()) ? t : (joined + " " + t).trim();
+      }
+      // iPhone can hand a new listening session the previous sentence again (an old final result):
+      // drop what was already sent, so the same message never goes twice.
+      const norm = (x) => x.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+      for (const prev of recentSent.filter(p => Date.now() - p.at < 60000)) {
+        const old = norm(prev.text), now = norm(joined);
+        if (now === old) { diag("sr-replay-ignored"); return; }
+        if (now.startsWith(old + " ")) joined = joined.slice(prev.text.length).trim();
       }
       text = joined; lastHeard = performance.now(); userTalking = true;
       if (!document.body.classList.contains("voice")) statusEl.textContent = text;
@@ -465,7 +474,14 @@
   }
 
   async function sendText(text) {
-    userTalking = false; setState("thinking");
+    userTalking = false;
+    const norm = (x) => x.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+    if (norm(text) === norm(lastSent.text) && Date.now() - lastSent.at < 8000) {   // guard: identical, seconds apart
+      diag("duplicate-ignored"); return listen();
+    }
+    lastSent = { text, at: Date.now() };
+    recentSent = [...recentSent, lastSent].slice(-4);
+    setState("thinking");
     try {
       const { id } = await api("/api/talk_text", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }) });

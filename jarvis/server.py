@@ -336,6 +336,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         future.add_done_callback(lambda f: _finish_talk(talk_id, f))
         return talk_id
 
+    last_text_talk: dict = {}
+
     @app.post("/api/talk_text")
     def talk_text(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
         """Like /api/talk, but the phone already recognised the speech. Returns an id to collect."""
@@ -343,7 +345,16 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         text = str(payload.get("text", "")).strip()
         if not text:
             raise HTTPException(status_code=400, detail="No text")
-        return {"id": _start_talk(text=text)}
+        # Guard: the same words again within a few seconds is a replay, not a new request; hand
+        # back the first one's answer instead of asking Claude twice.
+        key = re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+        prev = last_text_talk.get("key"), last_text_talk.get("at", 0), last_text_talk.get("id")
+        if prev[0] == key and time.time() - prev[1] < 15 and prev[2] in talks:
+            print(f"[web] ignored a repeat of {text!r}")
+            return {"id": prev[2]}
+        talk_id = _start_talk(text=text)
+        last_text_talk.update(key=key, at=time.time(), id=talk_id)
+        return {"id": talk_id}
 
     @app.get("/api/talk/{talk_id}")
     def talk_result(talk_id: str, x_jarvis_token: str | None = Header(None)):
