@@ -160,12 +160,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 actions = announcer.end_capture()
             metrics.record("siri", time.monotonic() - started, late=reply == STILL_WORKING)
             opens = [a for a in actions if a["type"] == "open"]
-            timers = [a for a in actions if a["type"] == "timer"]
-            result = {
-                "say": reply,
-                "open": opens[-1]["url"] if opens else "",
-                "timer_minutes": timers[-1]["minutes"] if timers else 0,
-            }
+            # Only include "open" when there is a link: Shortcuts counts an empty string as
+            # "has any value" and would try to open it.
+            result = {"say": reply}
+            if opens:
+                result["open"] = opens[-1]["url"]
             for extra in opens[:-1]:   # only one link can open at a time; send the rest to Telegram
                 announcer.push(f"{extra['text']}\n{extra['url']}")
             print(f"JARVIS: {result}")
