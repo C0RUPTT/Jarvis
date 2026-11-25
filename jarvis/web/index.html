@@ -286,8 +286,16 @@
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob);
       player.src = url;
-      player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-      player.play().catch(() => { URL.revokeObjectURL(url); resolve("failed"); });
+      let finished = false, guard = null;
+      const finish = (v) => { if (finished) return; finished = true; clearInterval(guard);
+        player.onended = player.onerror = player.onpause = null; URL.revokeObjectURL(url); resolve(v); };
+      player.onended = player.onerror = () => finish();
+      player.onpause = () => { if (!player.ended) setTimeout(() => player.paused && finish(), 800); };  // interrupted
+      let last = -1, still = 0;
+      guard = setInterval(() => {   // stuck (no progress for 3 s): move on rather than wait forever
+        if (player.currentTime === last) { if (++still >= 6) finish(); } else { still = 0; last = player.currentTime; }
+      }, 500);
+      player.play().catch(() => finish("failed"));
     });
   }
   async function speakParts(data) {
@@ -310,6 +318,7 @@
       } else if (data.audio) {
         player.src = "data:audio/mpeg;base64," + data.audio;
         player.onended = player.onerror = resolve;
+        setTimeout(resolve, 60000);
         player.play().catch(() => speakLocally(data.speech, resolve));
       } else speakLocally(data.speech || data.reply, resolve);
     });
@@ -319,7 +328,10 @@
     const u = new SpeechSynthesisUtterance(text);
     const voices = speechSynthesis.getVoices();
     u.voice = voices.find(v => /Daniel|Arthur|en-GB/i.test(v.name + v.lang)) || null;
-    u.onend = u.onerror = done;
+    let called = false;
+    const finish = () => { if (!called) { called = true; done(); } };
+    u.onend = u.onerror = finish;
+    setTimeout(finish, 4000 + text.length * 90);   // iPhone sometimes never reports the end
     speechSynthesis.speak(u);
   }
   function stopSpeaking() {
@@ -330,13 +342,17 @@
 
   // ---------- listening (voice activity detection) ----------
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
+  let resumeOnReturn = false, micFailures = 0;
   let speechStart = 0, lastLoud = 0, recStart = 0, noiseFloor = 0.01, vadTimer = null;
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
 
   async function openMic() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    await audioCtx.resume();
+    for (const t of stream.getAudioTracks()) {
+      t.onended = () => { diag("mic-ended"); if (stream) stream.__stale = true; };
+    }
+    if (!audioCtx || audioCtx.state === "closed") audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await audioCtx.resume().catch(() => {});
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
     src.connect(analyser);
@@ -449,12 +465,20 @@
 
   async function listen() {
     if (!conversation) return;
+    if (document.visibilityState === "hidden") { resumeOnReturn = true; return; }   // resumes when you're back
     if (useSR) return listenOnPhone();
     if (stream && (stream.__stale || stream.getAudioTracks().every(t => t.readyState === "ended"))) {
       stream.getTracks().forEach(t => t.stop()); stream = null;   // the old device went away
     }
     try { if (!stream) await openMic(); }
-    catch (e) { conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return; }
+    catch (e) {
+      if (document.visibilityState === "hidden") { resumeOnReturn = true; return; }
+      diag("mic-open-failed", { error: String(e?.name || e) });
+      if (++micFailures < 3) { setTimeout(listen, 1000); return; }   // often just a moment's interruption
+      conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return;
+    }
+    micFailures = 0;
+    if (audioCtx && audioCtx.state !== "running") await audioCtx.resume().catch(() => {});
     setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
@@ -735,11 +759,48 @@
       if (resume || conversation) listen();
     }
   }
-  document.addEventListener("visibilitychange", async () => {
-    if (document.visibilityState === "visible" && conversation && !wakeLock) {
-      try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+  // ---------- recovering from interruptions (switching apps, calls, Siri, the screen locking) ----------
+  // iPhone freezes the page in the background: the mic, speech recognition and audio all stop, often
+  // without telling us. So stop cleanly when leaving and start fresh when back, with no tap needed.
+  function onLeave() {
+    if (!conversation && state !== "standby") return;
+    resumeOnReturn = true;
+    diag("app-hidden", { state });
+    stopSpeaking(); stopSR(); stopWake?.(); pauseMic();
+    if (stream) stream.__stale = true;
+  }
+  async function onReturn() {
+    if (document.visibilityState !== "visible") return;
+    if (conversation && !wakeLock) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+    if (!resumeOnReturn) return;
+    resumeOnReturn = false;
+    diag("app-visible", { state, conversation });
+    await new Promise(r => setTimeout(r, 400));    // let iPhone hand the audio back
+    if (audioCtx && audioCtx.state !== "running") await audioCtx.resume().catch(() => {});
+    if (state === "standby") { listenForWake(); return; }
+    if (conversation && state !== "thinking") listen();   // a pending answer resumes on its own (collect)
+  }
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" ? onLeave() : onReturn());
+  window.addEventListener("pagehide", onLeave);
+  window.addEventListener("pageshow", onReturn);
+  window.addEventListener("focus", onReturn);
+
+  // Watchdog: in a conversation, something should always be listening, thinking or speaking.
+  // If nothing is (a recognition session died silently), start listening again.
+  let idleSince = 0;
+  setInterval(() => {
+    if (document.visibilityState !== "visible" || announcing) { idleSince = 0; return; }
+    const listeningNow = !!(rec || vadTimer);
+    const stuck = (conversation && state === "listening" && !listeningNow) ||
+                  (conversation && state === "idle") ||
+                  (state === "standby" && SR && !wakeRec && !resumeOnReturn);
+    if (!stuck) { idleSince = 0; return; }
+    if (!idleSince) { idleSince = Date.now(); return; }
+    if (Date.now() - idleSince > 2500) {
+      idleSince = 0; diag("watchdog-restart", { state });
+      if (state === "standby") listenForWake(); else listen();
     }
-  });
+  }, 1000);
 
   if (token) api("/api/status").then(s => add("sys", `Connected. At your service, ${s.user_name}.`))
     .catch(e => add("sys", "⚠ Can't reach Jarvis: " + e.message));
