@@ -32,7 +32,8 @@ def start(topic: str, on_done) -> None:
                         except json.JSONDecodeError:
                             data = {"summary": event.get("message", "")}
                         if not data.get("stop_hook_active"):
-                            on_done(str(data.get("label", ""))[:60], str(data.get("summary", ""))[:500])
+                            on_done(str(data.get("label", ""))[:60], str(data.get("summary", ""))[:500],
+                                    int(data.get("seconds", -1) or -1), str(data.get("session", ""))[:80])
             except Exception as e:  # noqa: BLE001 - network blips: reconnect quietly
                 if "timed out" not in str(e):
                     print(f"[notify] reconnecting after: {e}")

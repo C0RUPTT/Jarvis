@@ -17,6 +17,8 @@ _PATTERNS = [
     ("claude_always", r"^(always|every time)?\s*(tell|let) me (know )?(every time|whenever|each time) claude( code)? (is done|finishes|is finished)|^always (tell|let) me (know )?when claude( code)? (is done|finishes|is finished)"),
     ("claude_once", r"^(please )?(tell|let) me (know )?when claude( code)?('s| is)? (done|finished|finishes)|^(ping|notify) me when claude( code)? (is done|finishes)"),
     ("claude_off", r"^(stop|don'?t) (telling|tell|notifying|notify) me (about|when) claude"),
+    ("claude_every", r"^(tell me about|announce) every (reply|response|turn|time)"),
+    ("claude_long", r"^only (tell me about |announce )?(long|big|longer) (tasks|jobs|ones|work)"),
     ("update", r"^(please |go |can you |could you )?(update yourself|update jarvis|update|check for updates|install (the )?updates?|get the latest( version)?|upgrade yourself)( now| please)?$"),
     ("morning", r"^(hey |hi |ok(ay)? )?(good )?morning( jarvis)?$|^i'?m (up|awake)( now)?$|^(start|begin) my day$"),
     ("hold", r"^(please )?(hold (everything|it all|all|my (messages|notifications|stuff))|"
@@ -143,19 +145,35 @@ def _update(rt) -> str:
 
 
 def _claude_once(rt) -> str:
-    rt.claude_watch = "once"
+    rt.claude_watch = "once"   # temporary: back to the remembered setting afterwards
     return "Will do. I'll tell you the moment Claude Code finishes."
 
 
 def _claude_always(rt) -> str:
-    rt.claude_watch = "always"
+    rt.set_claude_watch("always")
     return "Understood. I'll tell you every time Claude Code finishes, until you say stop."
 
 
 def _claude_off(rt) -> str:
-    rt.claude_watch = "off"
+    rt.set_claude_watch("off")
     return "Righto, no more Claude Code updates."
 
 
-_ACTIONS = {"read_unread": _read_unread, "claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
+def _claude_every(rt) -> str:
+    import os
+
+    os.environ["JARVIS_CLAUDE_MIN_SECONDS"] = "0"
+    rt.set_claude_watch("always")
+    return "Every Claude Code reply, then. Do say if it gets chatty."
+
+
+def _claude_long(rt) -> str:
+    import os
+
+    os.environ["JARVIS_CLAUDE_MIN_SECONDS"] = "120"
+    rt.set_claude_watch("always")
+    return "Only work that takes two minutes or more, sir."
+
+
+_ACTIONS = {"claude_every": _claude_every, "claude_long": _claude_long, "read_unread": _read_unread, "claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
             "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}

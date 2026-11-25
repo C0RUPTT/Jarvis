@@ -305,7 +305,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             label = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
         label = label or str(payload.get("label", ""))
         summary = str(payload.get("summary") or payload.get("last_assistant_message") or "")
-        return {"result": rt.claude_code_finished(label, clean_for_speech(summary))}
+        return {"result": rt.claude_code_finished(label, clean_for_speech(summary),
+                                                  int(payload.get("seconds", -1) or -1), str(payload.get("session", "")))}
 
     # ---- dashboard -------------------------------------------------------------------------
     def _job_view(j) -> dict:
@@ -368,7 +369,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 return {"result": rt.morning()}
             return {"result": announcer.set_mode(str(payload.get("value")))}
         if action == "watch":
-            rt.claude_watch = str(payload.get("value", "off"))
+            rt.set_claude_watch(str(payload.get("value", "off")))
             return {"result": f"Claude Code announcements: {rt.claude_watch}"}
         if action == "clear_held":
             return {"result": f"Cleared {len(announcer.take_held())} item(s)."}

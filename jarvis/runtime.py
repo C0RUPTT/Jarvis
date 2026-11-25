@@ -27,22 +27,39 @@ class Runtime:
     jobs: object | None
     telegram: object | None
     _whisper: object | None = None
-    claude_watch: str = "off"      # "off" | "once" | "always": announce when Claude Code finishes
+    claude_watch: str = "always"   # "off" | "once" | "always": announce when Claude Code finishes
     dictation: list | None = None  # long-message mode: pieces collected until the user says "done"
 
-    def claude_code_finished(self, label: str = "", summary: str = "") -> str:
-        """Called by the Claude Code hook (POST /api/notify) when a Claude Code session finishes a task."""
+    def claude_code_finished(self, label: str = "", summary: str = "", seconds: int = -1,
+                             session: str = "") -> str:
+        """Called (via the Claude Code Stop hook) when a Claude Code session finishes a turn."""
+        from . import claude_sessions
+
+        claude_sessions.seen(self.config.data_dir, label, session, summary)
         if self.claude_watch == "off":
-            return "ignored (not watching)"
+            return "ignored (announcements off)"
+        min_seconds = int(os.getenv("JARVIS_CLAUDE_MIN_SECONDS", "30"))
+        if self.claude_watch == "always" and 0 <= seconds < min_seconds:
+            return "ignored (quick reply)"
         where = f" on {label}" if label else ""
         text = f"Claude Code is done{where}."
         if summary:
-            text += f" {summary[:300]}"
-        # The user explicitly asked for this, so it always gets through, with sound.
+            text += f" {summary[:400]}"
+        # Announcements you asked for always get through, with sound.
         self.announcer.announce(text, urgent=True)
         if self.claude_watch == "once":
-            self.claude_watch = "off"
+            self.set_claude_watch(self._watch_default())
         return "announced"
+
+    def _watch_default(self) -> str:
+        path = self.config.data_dir / "claude-watch"
+        return path.read_text().strip() if path.exists() else os.getenv("JARVIS_CLAUDE_WATCH", "always")
+
+    def set_claude_watch(self, mode: str, remember: bool = False) -> None:
+        """'once' is temporary; 'always' and 'off' are remembered across restarts."""
+        self.claude_watch = mode
+        if remember or mode in ("always", "off"):
+            (self.config.data_dir / "claude-watch").write_text(mode)
 
     def transcribe(self, audio) -> str:
         if self._whisper is None:
@@ -252,7 +269,9 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
     if os.getenv("JARVIS_NOTIFY_LISTENER", "1") != "0":
         from . import notify_listener
 
-        notify_listener.start(config.notify_topic, lambda label, summary: rt.claude_code_finished(label, summary))
+        notify_listener.start(config.notify_topic, rt.claude_code_finished)
+    rt.claude_watch = rt._watch_default()
+    ctx.extras["runtime"] = rt
 
     if telegram and config.telegram_token and config.telegram_user_id:
         from .telegram import TelegramBot
