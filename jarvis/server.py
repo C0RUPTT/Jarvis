@@ -303,7 +303,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if not label:
             cwd = str(payload.get("cwd") or "")
             label = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
-        summary = str(payload.get("last_assistant_message") or "")
+        label = label or str(payload.get("label", ""))
+        summary = str(payload.get("summary") or payload.get("last_assistant_message") or "")
         return {"result": rt.claude_code_finished(label, clean_for_speech(summary))}
 
     # ---- dashboard -------------------------------------------------------------------------

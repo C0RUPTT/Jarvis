@@ -242,56 +242,14 @@ FUNNEL_PORT = 8443   # Funnel only on this port and only for /notify; the main J
 
 
 def notify_setup(config) -> str:
-    """Expose ONLY the notify endpoint publicly (Tailscale Funnel, free), so Claude Code sessions
-    anywhere can tell Jarvis they're done."""
-    import json
-    import re
-
-    tailscale = shutil.which("tailscale")
-    if not tailscale:
-        return "Tailscale isn't installed on this server."
-    funnel = [tailscale, "funnel", "--bg", f"--https={FUNNEL_PORT}", "--set-path=/notify",
-              f"http://127.0.0.1:{config.port}/api/notify"]
-    # Works without sudo once the user is a Tailscale operator (sudo tailscale set --operator=$USER).
-    code, out = _run(["timeout", "40", *funnel], timeout=60)
-    if code != 0 and ("access denied" in out.lower() or "permission" in out.lower() or "operator" in out.lower()):
-        code, out = _run(["sudo", "-n", "timeout", "40", *funnel], timeout=60)
-    if code != 0 and "password is required" in out:
-        return ("I need a one-time permission first. In the server's SSH terminal, paste:\n\n"
-                "sudo tailscale set --operator=$USER\n\n"
-                "then send /notifysetup again.")
-    link = re.search(r"https://login\.tailscale\.com/\S+", out)
-    if link:
-        return (f"Tailscale needs you to allow Funnel once. Open this, approve, then send /notifysetup again:\n"
-                f"{link.group(0)}")
-    if code != 0:
-        return f"Setting up the public notify link failed:\n{out[-600:]}"
-    _, st = _run([tailscale, "status", "--json"], timeout=15)
-    try:
-        host = json.loads(st)["Self"]["DNSName"].rstrip(".")
-    except (ValueError, KeyError):
-        host = "<your-server>.ts.net"
-    url = f"https://{host}:{FUNNEL_PORT}/notify?token={config.notify_token}"
+    """How Claude Code sessions tell Jarvis they're done: a secret ntfy.sh topic (nothing public on
+    this server). The environment setup is done for you by Claude; this just shows the topic."""
     return (
-        "Public notify link is live (it can only send 'Claude Code is done' pings; nothing else is public):\n\n"
-        f"{url}\n\n"
-        "Next: give this link to your Claude Code sessions as the environment variable JARVIS_NOTIFY_URL "
-        "(I'll walk you through it), then say 'let me know when Claude Code is done'."
+        "Claude Code 'done' pings come through a private ntfy topic (no open ports on your server).\n\n"
+        f"Topic: {config.notify_topic}\n"
+        f"Claude Code sessions need: JARVIS_NOTIFY_URL=https://ntfy.sh/{config.notify_topic}\n\n"
+        "Then say 'let me know when Claude Code is done'."
     )
-
-
-def set_env_value(key: str, value: str) -> None:
-    env = ROOT / ".env"
-    lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith(key + "=")]
-    env.write_text("\n".join(lines + [f"{key}={value}"]) + "\n")
-    os.environ[key] = value
-
-
-def set_city(arg: str = "") -> str:
-    if not arg:
-        return f"Current city: {os.getenv('JARVIS_CITY') or 'not set'}. Set it with /city Dallas"
-    set_env_value("JARVIS_CITY", arg.strip())
-    return f"Got it. Your morning briefing will include the weather for {arg.strip()}."
 
 
 def commands(config, jobs, brain=None) -> dict:

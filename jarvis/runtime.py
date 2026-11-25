@@ -249,6 +249,10 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
     backup.start_nightly(config, announcer.announce)
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
+    if os.getenv("JARVIS_NOTIFY_LISTENER", "1") != "0":
+        from . import notify_listener
+
+        notify_listener.start(config.notify_topic, lambda label, summary: rt.claude_code_finished(label, summary))
 
     if telegram and config.telegram_token and config.telegram_user_id:
         from .telegram import TelegramBot

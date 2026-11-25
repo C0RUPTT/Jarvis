@@ -1,13 +1,24 @@
-#!/usr/bin/env bash
-# Claude Code "Stop" hook: tells Jarvis that Claude Code finished a task, so Jarvis can announce it
-# ("let me know when Claude Code is done"). Does nothing unless JARVIS_NOTIFY_URL is set, and never
-# blocks or slows Claude Code down.
-#
-# JARVIS_NOTIFY_URL comes from your Jarvis bot's /notifysetup command. Set it as an environment
-# variable: in your Claude Code cloud environment settings, or in your shell on a computer.
-[ -n "${JARVIS_NOTIFY_URL:-}" ] || exit 0
-label="$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")"
-case "$JARVIS_NOTIFY_URL" in *\?*) sep="&" ;; *) sep="?" ;; esac
-curl -s -m 5 -o /dev/null -X POST "${JARVIS_NOTIFY_URL}${sep}label=${label}" \
-  -H "Content-Type: application/json" --data-binary @- >/dev/null 2>&1 || true
-exit 0
+#!/usr/bin/env python3
+"""Claude Code "Stop" hook: tells Jarvis that Claude finished a task, so Jarvis can announce it
+("let me know when Claude Code is done"). Posts a small message to JARVIS_NOTIFY_URL (the private
+ntfy topic shown by the bot's /notifysetup). Does nothing if it's unset; never blocks Claude."""
+import json
+import os
+import sys
+import urllib.request
+
+url = os.environ.get("JARVIS_NOTIFY_URL")
+if not url:
+    sys.exit(0)
+try:
+    event = json.load(sys.stdin)
+except Exception:
+    event = {}
+if event.get("stop_hook_active"):
+    sys.exit(0)
+label = os.path.basename(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+body = json.dumps({"label": label, "summary": (event.get("last_assistant_message") or "")[:500]}).encode()
+try:
+    urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST"), timeout=5).close()
+except Exception:
+    pass

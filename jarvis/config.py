@@ -42,6 +42,7 @@ class Config:
     port: int
     token: str
     notify_token: str          # low-privilege key: can only send "Claude Code finished" pings
+    notify_topic: str          # secret ntfy.sh topic Claude Code sessions post "done" to
     ntfy_topic: str            # fallback push notifications via the ntfy app
     telegram_token: str        # from @BotFather
     telegram_user_id: str      # your numeric id (from @userinfobot); the bot ignores everyone else
@@ -83,6 +84,8 @@ class Config:
             port=int(os.getenv("JARVIS_PORT", "8765")),
             token=os.getenv("JARVIS_TOKEN") or _stored_token(data_dir),
             notify_token=os.getenv("JARVIS_NOTIFY_TOKEN") or _stored_token(data_dir, "notify-token"),
+            notify_topic=os.getenv("JARVIS_NOTIFY_TOPIC") or _topic_for(
+                os.getenv("JARVIS_NOTIFY_TOKEN") or _stored_token(data_dir, "notify-token")),
             ntfy_topic=os.getenv("JARVIS_NTFY_TOPIC", ""),
             telegram_token=os.getenv("JARVIS_TELEGRAM_TOKEN", ""),
             telegram_user_id=os.getenv("JARVIS_TELEGRAM_USER_ID", ""),
@@ -111,6 +114,13 @@ def apply_timezone(name: str) -> bool:
     except AttributeError:  # Windows has no tzset; TZ is still honoured by new processes
         pass
     return True
+
+
+def _topic_for(notify_token: str) -> str:
+    """Secret ntfy topic name, derived from the notify key (a one-way hash, so the key isn't exposed)."""
+    import hashlib
+
+    return "jarvis-done-" + hashlib.sha256(notify_token.encode()).hexdigest()[:24]
 
 
 def _stored_token(data_dir: Path, name: str = "token") -> str:
