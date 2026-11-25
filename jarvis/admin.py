@@ -250,8 +250,16 @@ def notify_setup(config) -> str:
     tailscale = shutil.which("tailscale")
     if not tailscale:
         return "Tailscale isn't installed on this server."
-    code, out = _run(["sudo", "-n", "timeout", "40", tailscale, "funnel", "--bg", f"--https={FUNNEL_PORT}",
-                      "--set-path=/notify", f"http://127.0.0.1:{config.port}/api/notify"], timeout=60)
+    funnel = [tailscale, "funnel", "--bg", f"--https={FUNNEL_PORT}", "--set-path=/notify",
+              f"http://127.0.0.1:{config.port}/api/notify"]
+    # Works without sudo once the user is a Tailscale operator (sudo tailscale set --operator=$USER).
+    code, out = _run(["timeout", "40", *funnel], timeout=60)
+    if code != 0 and ("access denied" in out.lower() or "permission" in out.lower() or "operator" in out.lower()):
+        code, out = _run(["sudo", "-n", "timeout", "40", *funnel], timeout=60)
+    if code != 0 and "password is required" in out:
+        return ("I need a one-time permission first. In the server's SSH terminal, paste:\n\n"
+                "sudo tailscale set --operator=$USER\n\n"
+                "then send /notifysetup again.")
     link = re.search(r"https://login\.tailscale\.com/\S+", out)
     if link:
         return (f"Tailscale needs you to allow Funnel once. Open this, approve, then send /notifysetup again:\n"
