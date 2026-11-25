@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from . import fastpath, metrics, runtime
+from . import fastpath, metrics, runtime, spoken
 from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
 
@@ -299,7 +299,21 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 print(f"[web] skipped an older message: {heard!r}")
                 return {"heard": "", "reply": "", "speech": "", "audio": None}
             asked_at = time.monotonic()
-            reply = rt.ask(heard)
+            speech_id, job = _new_speech() if config.online_voice else ("", None)
+            streamed: list[str] = []
+
+            def early(sentence: str) -> None:   # a sentence of the answer, as soon as it's written
+                from .clock import exact_times
+
+                sentence = clean_for_speech(exact_times(sentence))
+                if not sentence or job is None or sum(len(x) for x in streamed) > 260:
+                    return   # long answers: speak the start only; the rest goes to the phone below
+                streamed.append(sentence)
+                _add_speech(job, sentence)
+                if talk_id:
+                    with talks_lock:
+                        talks.get(talk_id, {})["speech_id"] = speech_id
+            reply = rt.ask(heard, on_sentence=early if job is not None else None)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        queue=round(asked_at - queued_at, 2), think=round(time.monotonic() - asked_at, 2),
                        on_phone=bool(text))
@@ -309,9 +323,26 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         # starting now, before the phone even asks).
         spoken_reply = _voice_sized(reply, heard)
         parts = _speech_parts(clean_for_speech(spoken_reply)) if config.online_voice else []
-        speech_id = _start_speech(parts) if parts else ""
+        if job is not None:
+            # Add whatever wasn't already spoken early. If what was streamed isn't the start of the
+            # final answer (e.g. "Let me check" before a search), the whole answer follows it.
+            norm = lambda x: " ".join(re.sub(r"[^a-z0-9 ]", " ", x.lower()).split())   # noqa: E731
+            said, final = norm(" ".join(streamed)), norm(clean_for_speech(spoken_reply))
+            if streamed and final.startswith(said):
+                rest, done_chars = [], 0
+                for sentence in re.split(r"(?<=[.!?])\s+", clean_for_speech(spoken_reply)):
+                    if done_chars < len(said):
+                        done_chars += len(norm(sentence)) + 1
+                        continue
+                    rest.append(sentence)
+                parts = [p for p in rest if p.strip()]
+            elif streamed and len(reply) > len(spoken_reply):
+                parts = [spoken.FULL_ON_PHONE]   # long: the start was spoken, the whole text is on the phone
+            for part in parts:
+                _add_speech(job, part)
+            _end_speech(job)
         return {"heard": heard, "reply": reply, "speech": clean_for_speech(spoken_reply), "audio": None,
-                "speech_id": speech_id, "speech_parts": parts}
+                "speech_id": speech_id, "speech_parts": job["parts"] if job is not None else []}
 
     def _echo_of_jarvis(heard: str) -> bool:
         """True if what the mic 'heard' is just a piece of Jarvis's last answer (it spoke on the
@@ -334,39 +365,70 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 parts.append(sentence)
         return parts[:12]
 
-    def _start_speech(parts: list[str]) -> str:
+    # A speech job grows sentence by sentence (each sentence's audio is made as soon as it arrives)
+    # and is marked done at the end; the phone plays part 0, 1, 2... until the server says "that's all".
+    def _new_speech() -> tuple[str, dict]:
         import secrets as _secrets
 
         speech_id = _secrets.token_urlsafe(8)
         for old in [k for k, v in speech_jobs.items() if time.time() - v["created"] > 600]:
             speech_jobs.pop(old, None)
-        job = {"created": time.time(), "audio": [None] * len(parts), "ready": [threading.Event() for _ in parts]}
+        job = {"created": time.time(), "parts": [], "audio": [], "ready": [], "done": False,
+               "cond": threading.Condition()}
         speech_jobs[speech_id] = job
+        return speech_id, job
 
-        def make(i: int) -> None:
+    def _add_speech(job: dict, text: str) -> None:
+        with job["cond"]:
+            i = len(job["parts"])
+            job["parts"].append(text)
+            job["audio"].append(None)
+            job["ready"].append(threading.Event())
+            job["cond"].notify_all()
+
+        def make() -> None:
             try:
-                job["audio"][i] = synthesize_mp3(parts[i], config.online_voice) or b""
+                job["audio"][i] = synthesize_mp3(text, config.online_voice) or b""
             finally:
                 job["ready"][i].set()
-        for i in range(len(parts)):
-            threading.Thread(target=make, args=(i,), daemon=True).start()
+        threading.Thread(target=make, daemon=True).start()
+
+    def _end_speech(job: dict) -> None:
+        with job["cond"]:
+            job["done"] = True
+            job["cond"].notify_all()
+
+    def _start_speech(parts: list[str]) -> str:
+        speech_id, job = _new_speech()
+        for part in parts:
+            _add_speech(job, part)
+        _end_speech(job)
         return speech_id
 
     @app.get("/api/speech/{speech_id}/{part}")
     def speech(speech_id: str, part: int, token: str | None = Query(None),
                x_jarvis_token: str | None = Header(None)):
-        """One sentence of Jarvis's voice for a web-app answer (MP3). 404 = use the phone's voice."""
+        """One sentence of Jarvis's voice (MP3). Waits for that sentence if Claude is still writing.
+        410 = no more sentences; 404 = no voice for it (the phone says the X-Text itself)."""
+        from urllib.parse import quote
+
+        from fastapi.responses import JSONResponse, Response
+
         check(x_jarvis_token or token)
         job = speech_jobs.get(speech_id)
-        if not job or not 0 <= part < len(job["audio"]):
+        if not job or part < 0:
             raise HTTPException(status_code=404, detail="Unknown speech")
+        with job["cond"]:
+            job["cond"].wait_for(lambda: part < len(job["parts"]) or job["done"], timeout=60)
+            if part >= len(job["parts"]):
+                return JSONResponse(status_code=410, content={"detail": "end"})
+            text = job["parts"][part]
         job["ready"][part].wait(timeout=20)
         audio = job["audio"][part]
         if not audio:
-            raise HTTPException(status_code=404, detail="Voice unavailable")
-        from fastapi.responses import Response
-
-        return Response(audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+            return JSONResponse(status_code=404, content={"detail": "Voice unavailable", "text": text})
+        return Response(audio, media_type="audio/mpeg",
+                        headers={"Cache-Control": "no-store", "X-Text": quote(text[:500])})
 
     def _finish_talk(talk_id: str, future) -> None:
         try:
@@ -445,7 +507,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if not item:
                 raise HTTPException(status_code=404, detail="Unknown or expired request")
             if item["status"] != "done":
-                return {"status": "working"}
+                return {"status": "working", "speech_id": item.get("speech_id", "")}
             item["fetched"] = True
             return {"status": "done", **item["result"]}
 

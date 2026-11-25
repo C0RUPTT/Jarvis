@@ -166,8 +166,9 @@ class Runtime:
             self._whisper = Transcriber(self.config.whisper_model)
         return self._whisper.transcribe(audio)
 
-    def ask(self, text: str) -> str:
-        """Everything the user says goes through here: fast path first, then Claude."""
+    def ask(self, text: str, on_sentence=None) -> str:
+        """Everything the user says goes through here: fast path first, then Claude.
+        on_sentence: optional, gets each sentence of Claude's answer as soon as it's written."""
         from . import fastpath
 
         long_reply = self._long_message(text)
@@ -183,7 +184,10 @@ class Runtime:
         if reply is not None:
             metrics.record("fast", time.monotonic() - started)
         else:
-            reply = self.brain.ask(text)
+            import inspect
+
+            streams = on_sentence is not None and "on_sentence" in inspect.signature(self.brain.ask).parameters
+            reply = self.brain.ask(text, on_sentence=on_sentence) if streams else self.brain.ask(text)
         held = self.announcer.peek_held()
         if woke and held:
             reply += f" Also, good morning: {held} thing{'s' if held != 1 else ''} came in overnight. Ask me what you missed."

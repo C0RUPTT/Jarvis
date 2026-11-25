@@ -286,9 +286,16 @@
   // Sentence by sentence: the server makes each sentence's audio in parallel, so the first one is
   // ready almost at once; the next is downloaded while the current one plays.
   let speechRun = 0;
+  // One sentence of the answer: {blob} to play, {text} to say with the phone's voice, or {end}.
+  // The server waits for a sentence Claude is still writing, so this can be asked for early.
   function fetchPart(id, i) {
     return fetch(`/api/speech/${id}/${i}`, { headers: { "X-Jarvis-Token": token } })
-      .then(r => r.ok ? r.blob() : null).catch(() => null);
+      .then(async r => {
+        if (r.ok) return { blob: await r.blob() };
+        if (r.status === 410) return { end: true };
+        const d = await r.json().catch(() => ({}));
+        return d.text ? { text: d.text } : { end: true };
+      }).catch(() => ({ end: true }));
   }
   try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: "Jarvis", artist: "Speaking" }); } catch {}
   function playBlob(blob) {
@@ -314,23 +321,24 @@
     diag("timing", { e2e: +((performance.now() - turnEndedAt) / 1000).toFixed(2) }); turnEndedAt = 0;
   }
   async function speakParts(data) {
-    const run = ++speechRun, parts = data.speech_parts;
+    const run = ++speechRun;
     let next = fetchPart(data.speech_id, 0);
-    for (let i = 0; i < parts.length; i++) {
-      const blob = await next;
-      if (run !== speechRun) return;                        // interrupted
-      next = i + 1 < parts.length ? fetchPart(data.speech_id, i + 1) : null;
-      if (i === 0 && blob) player.addEventListener("playing", reportTiming, { once: true });
-      const failed = !blob || (await playBlob(blob)) === "failed";
-      if (failed) await new Promise(r => speakLocally(parts[i], r));
+    for (let i = 0; ; i++) {
+      const part = await next;
+      if (run !== speechRun || part.end) return;            // interrupted, or that was all
+      next = fetchPart(data.speech_id, i + 1);              // the next sentence loads while this plays
+      if (i === 0 && part.blob) player.addEventListener("playing", reportTiming, { once: true });
+      const failed = !part.blob || (await playBlob(part.blob)) === "failed";
+      if (failed && part.text) await new Promise(r => speakLocally(part.text, r));
       if (run !== speechRun) return;
     }
   }
 
+
   function speak(data) {
     watchForBargeIn();
     return new Promise((resolve) => {
-      if (data.speech_id && data.speech_parts?.length) {
+      if (data.speech_id) {
         speakParts(data).then(resolve);
       } else if (data.audio) {
         player.src = "data:audio/mpeg;base64," + data.audio;
@@ -547,10 +555,11 @@
       const { id } = await api("/api/talk_text", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }) });
       savePending(id);
-      const data = await collect(id);
-      if (!data || !data.heard) return listen();
+      let early = null;
+      const data = await collect(id, (sid) => { setState("speaking"); early = speak({ speech_id: sid }); });
+      if (!data || !data.heard) { if (early) await early; return listen(); }
       add("you", data.heard);
-      await reply(data);
+      await reply(data, early);
       if (data.standby || isStandby(data.heard)) return goStandby();
     } catch (e) { add("sys", "⚠ " + e.message); }
     if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
@@ -639,12 +648,15 @@
   // working, and when you come back the answer is waiting (or it arrives on Telegram after 45s).
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   function savePending(id) { try { id ? localStorage.setItem("jarvis-pending", id) : localStorage.removeItem("jarvis-pending"); } catch {} }
-  async function collect(id) {
+  // onSpeech(speechId): called once, as soon as the first sentence of the answer exists, so Jarvis
+  // starts talking while Claude is still writing the rest.
+  async function collect(id, onSpeech) {
     for (let i = 0; i < 400; i++) {                     // up to ~7 minutes
       if (document.visibilityState === "visible") {
         try {
           const r = await api("/api/talk/" + id);
           if (r.status === "done") { savePending(null); return r; }
+          if (r.speech_id && onSpeech) { onSpeech(r.speech_id); onSpeech = null; }
         } catch (e) {
           if (/Unknown or expired|404/.test(e.message)) { savePending(null); return null; }
         }
@@ -661,10 +673,11 @@
     try {
       const { id } = await api("/api/talk?wait=false", { method: "POST", body: form });
       savePending(id);
-      const data = await collect(id);
-      if (!data || !data.heard) return listen();        // nothing intelligible: keep listening
+      let early = null;
+      const data = await collect(id, (sid) => { setState("speaking"); early = speak({ speech_id: sid }); });
+      if (!data || !data.heard) { if (early) await early; return listen(); }
       add("you", data.heard);
-      await reply(data);
+      await reply(data, early);
       if (data.standby || isStandby(data.heard)) return goStandby();
     } catch (e) { add("sys", "⚠ " + e.message); }
     if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
@@ -717,11 +730,11 @@
     if (!voiceEndedAt) return;
     diag("timing", { gap: +((performance.now() - voiceEndedAt) / 1000).toFixed(2) }); voiceEndedAt = 0;
   }
-  async function reply(data) {
+  async function reply(data, early) {
     if (data.reply) add("jarvis", data.reply);
-    if (!data.reply) return;
+    if (!data.reply && !early) return;
     setState("speaking");
-    await speak(data);
+    await (early || speak(data));   // already speaking if it started early
     voiceEndedAt = bargedIn ? 0 : performance.now();
     stopBargeWatch();
     // Recording mode keeps the mic open between turns, so no pause is needed. iPhone's own

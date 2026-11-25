@@ -10,6 +10,7 @@ about 38k. Heavy work (coding, building apps) goes to background jobs that run f
 from __future__ import annotations
 
 import json
+import re
 import os
 import queue
 import shutil
@@ -61,6 +62,7 @@ class ClaudeCodeBrain:
             self.claude, "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json", "--verbose",
+            "--include-partial-messages",        # words as they're written: speech can start early
             "--model", cfg.cc_model,
             "--effort", cfg.effort,
             "--system-prompt", persona,          # lean: replaces Claude Code's large default prompt
@@ -116,13 +118,19 @@ class ClaudeCodeBrain:
 
     # -- conversation ----------------------------------------------------------
 
-    def ask(self, text: str) -> str:
+    def ask(self, text: str, on_sentence=None) -> str:
+        """on_sentence(text): called with each complete sentence as Claude writes it (so the web app
+        can start speaking before the whole answer exists)."""
         with self.lock:
+            self._on_sentence = on_sentence
             for attempt in range(2):
                 if self.proc is None or self.proc.poll() is not None:
                     self._start(fresh=attempt > 0)  # if resuming fails, start fresh
                 started = time.monotonic()
-                reply = self._turn(text)
+                try:
+                    reply = self._turn(text)
+                finally:
+                    self._flush_sentences()
                 if reply is not None:
                     metrics.record("turn", time.monotonic() - started, self.last_usage)
                     return reply
@@ -156,6 +164,9 @@ class ClaudeCodeBrain:
                 continue
 
             kind = event.get("type")
+            if kind == "stream_event":
+                self._stream_event(event.get("event") or {})
+                continue
             if kind == "system" and event.get("subtype") == "init":
                 self.connectors = [f"{m.get('name')} ({m.get('status')})" for m in event.get("mcp_servers", [])
                                    if m.get("name") != "jarvis"]
@@ -171,6 +182,44 @@ class ClaudeCodeBrain:
                     print(f"[claude-code] error result: {event}")
                     return result or "Something went wrong on my end."
                 return result or "Done."
+
+    # -- streaming sentences -----------------------------------------------------
+    _on_sentence = None
+    _pending = ""
+    _ABBREVIATION = re.compile(r"(?:\b(?:[A-Za-z]\.){1,3}|\b(?:Mr|Mrs|Ms|Dr|St|vs|etc|approx|No))\.?$")
+    _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+
+    def _stream_event(self, ev: dict) -> None:
+        if self._on_sentence is None:
+            return
+        kind = ev.get("type")
+        if kind == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta":
+            self._pending += ev["delta"].get("text", "")
+            parts = self._SENTENCE_END.split(self._pending)
+            done, carry = [], ""
+            for part in parts[:-1]:              # every finished sentence...
+                carry = f"{carry} {part}".strip()
+                if not self._ABBREVIATION.search(carry):   # ...but "6 P.M." or "Dr." isn't an ending
+                    done.append(carry)
+                    carry = ""
+            for sentence in done:
+                self._emit(sentence)
+            self._pending = f"{carry} {parts[-1]}" if carry else parts[-1]   # keep its trailing space
+        elif kind in ("content_block_stop", "message_stop"):
+            self._flush_sentences()
+
+    def _flush_sentences(self) -> None:
+        if self._pending.strip():
+            self._emit(self._pending)
+        self._pending = ""
+
+    def _emit(self, sentence: str) -> None:
+        sentence = sentence.strip()
+        if sentence and self._on_sentence is not None:
+            try:
+                self._on_sentence(sentence)
+            except Exception as e:  # noqa: BLE001 - speaking early is a bonus; never break the turn
+                print(f"[claude-code] early speech failed: {e}")
 
     def _handle_assistant(self, event: dict) -> None:
         content = (event.get("message") or {}).get("content") or []
