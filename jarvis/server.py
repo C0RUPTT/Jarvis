@@ -219,7 +219,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
 
     speech_jobs: dict[str, dict] = {}   # id -> sentence audio for a web-app answer (see /api/speech)
 
-    def _process_talk(path: str = "", text: str = "") -> dict:
+    web_turn = threading.Lock()
+
+    def _superseded(talk_id: str) -> bool:
+        with talks_lock:
+            return bool(talks.get(talk_id, {}).get("superseded"))
+
+    def _process_talk(path: str = "", text: str = "", talk_id: str = "") -> dict:
         started = time.monotonic()
         if text:   # already turned into text on the phone (much faster than this small server)
             heard = text
@@ -234,7 +240,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             return {"heard": "", "reply": "", "speech": "", "audio": None}
         if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
             return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
-        reply = rt.ask(heard)
+        with web_turn:   # one app message at a time, so a newer one can replace those still queued
+            if talk_id and _superseded(talk_id):   # you've already said something newer: skip this one
+                print(f"[web] skipped an older message: {heard!r}")
+                return {"heard": "", "reply": "", "speech": "", "audio": None}
+            reply = rt.ask(heard)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        think=round(time.monotonic() - heard_at, 2), on_phone=bool(text))
         print(f"JARVIS: {reply}")
@@ -303,8 +313,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         def unclaimed():   # the app was closed or frozen: send the answer to Telegram instead
             with talks_lock:
                 item = talks.get(talk_id)
-                if not item or item["fetched"]:
-                    return
+                if not item or item["fetched"] or item.get("superseded"):
+                    return   # collected, or replaced by a newer message: nothing to forward
                 item["fetched"] = True
             if result.get("reply"):
                 announcer.announce(f"You asked: \"{result.get('heard', '')[:80]}\"\n{result['reply']}", reply=True)
@@ -331,8 +341,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         with talks_lock:
             for old in [k for k, v in talks.items() if time.time() - v["created"] > 3600]:
                 talks.pop(old)
+            # A new message from the app replaces any still waiting: answering a backlog of old
+            # (repeated) messages one by one is what made answers trickle into Telegram minutes later.
+            for item in talks.values():
+                if item["status"] == "working":
+                    item["superseded"] = True
             talks[talk_id] = {"status": "working", "result": None, "created": time.time(), "fetched": False}
-        future = pool.submit(_process_talk, **kwargs)
+        future = pool.submit(_process_talk, talk_id=talk_id, **kwargs)
         future.add_done_callback(lambda f: _finish_talk(talk_id, f))
         return talk_id
 
