@@ -70,6 +70,9 @@ def report(data_dir: Path, days: float = 3) -> str:
     e2e = [r["seconds"] for r in rows if r["kind"] == "web_e2e"]
     if e2e:
         lines.append(f"    you stop talking -> Jarvis starts talking  {med(e2e)}  ({len(e2e)} measured)")
+    gaps = [r["seconds"] for r in rows if r["kind"] == "web_gap"]
+    if gaps:
+        lines.append(f"    Jarvis stops talking -> you can talk  {med(gaps)}  ({len(gaps)} measured)")
     if days >= 1:
         lines.append("Tip: /stats 1 shows just the last hour.")
     return "\n".join(lines)

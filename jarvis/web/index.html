@@ -398,11 +398,12 @@
 
   // ---------- listening (voice activity detection) ----------
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
-  let resumeOnReturn = false, micFailures = 0;
+  let resumeOnReturn = false, micFailures = 0, calibrated = false;
   let speechStart = 0, lastLoud = 0, recStart = 0, noiseFloor = 0.01, vadTimer = null;
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
 
   async function openMic() {
+    calibrated = false;
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     for (const t of stream.getAudioTracks()) {
       t.onended = () => { diag("mic-ended"); if (stream) stream.__stale = true; };
@@ -488,7 +489,7 @@
       orb.style.setProperty("--level", 0.45 + Math.random() * 0.25);
     };
     // Any sign the mic is live counts (iPhone does not always send "audiostart").
-    rec.onaudiostart = rec.onstart = rec.onsoundstart = rec.onspeechstart = () => { audioStarted = true; srCaptureFails = 0; };
+    rec.onaudiostart = rec.onstart = rec.onsoundstart = rec.onspeechstart = () => { audioStarted = true; srCaptureFails = 0; reportGap(); };
     rec.onerror = (e) => {
       diag("sr-error", { error: e.error });
       if (["not-allowed", "service-not-allowed"].includes(e.error)) {
@@ -591,7 +592,10 @@
     setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
-    let calibrateUntil = performance.now() + 400;
+    let calibrateUntil = calibrated ? 0 : performance.now() + 400;   // learn the room once
+    calibrated = true;
+    // The last echo of Jarvis's voice can linger a moment: don't let it count as you starting.
+    const tailUntil = performance.now() + (voiceEndedAt ? 150 : 0);
     if (bargedIn) {   // you interrupted Jarvis: you're already talking, so record straight away
       bargedIn = false; calibrateUntil = 0;
       speechStart = lastLoud = performance.now(); userTalking = true;
@@ -608,13 +612,14 @@
       let sum = 0; for (const v of buf) sum += v * v;
       const rms = Math.sqrt(sum / buf.length), now = performance.now();
       if (now < calibrateUntil) { noiseFloor = Math.max(0.002, noiseFloor * 0.7 + rms * 0.3); return; }
+      if (voiceEndedAt) reportGap();   // from here on, you're heard
       if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
       peak = Math.max(peak, rms);
       // The phone's own mic (echo-cancelled, at arm's length) is far quieter than AirPods: a fixed
       // 0.02 never triggered on it. Speech = clearly above this room's noise.
       const threshold = Math.max(noiseFloor * 2.5, 0.006);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
-      if (rms > threshold) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
+      if (rms > threshold && (speechStart || now > tailUntil)) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
       if (speechStart && now - lastLoud > 1200) {                // a 1.2-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
@@ -707,13 +712,21 @@
     if (data && data.heard) { add("you", data.heard); if (data.reply) add("jarvis", data.reply); }
   })();
 
+  let voiceEndedAt = 0;   // for measuring the gap between Jarvis finishing and the app hearing you
+  function reportGap() {
+    if (!voiceEndedAt) return;
+    diag("timing", { gap: +((performance.now() - voiceEndedAt) / 1000).toFixed(2) }); voiceEndedAt = 0;
+  }
   async function reply(data) {
     if (data.reply) add("jarvis", data.reply);
     if (!data.reply) return;
     setState("speaking");
     await speak(data);
+    voiceEndedAt = bargedIn ? 0 : performance.now();
     stopBargeWatch();
-    if (!bargedIn) await new Promise(r => setTimeout(r, 350));   // on the loudspeaker, iPhone needs a moment to hand the mic back
+    // Recording mode keeps the mic open between turns, so no pause is needed. iPhone's own
+    // recognition starts a new session each turn and needs a moment after the speaker.
+    if (!bargedIn && useSR) await new Promise(r => setTimeout(r, 300));
   }
 
   // ---------- conversation control ----------
@@ -731,6 +744,10 @@
     setState("idle");
   }
 
+  // For automated tests: one "Jarvis answers, then listens again" cycle.
+  orb.addEventListener("jarvis-test-reply", async () => {
+    pauseMic(); await reply({ reply: "Test.", audio: "AAAA" }); listen();
+  });
   orb.onclick = () => {
     if (state === "speaking") { stopSpeaking(); return; }    // interrupt; the loop resumes listening
     if (state === "standby") { stopWake(); startConversation(); return; }

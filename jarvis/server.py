@@ -689,6 +689,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if payload.get("event") == "timing" and isinstance(payload.get("e2e"), (int, float)):
             metrics.record("web_e2e", float(payload["e2e"]))   # you stop talking -> Jarvis starts talking
             return {"ok": True}
+        if payload.get("event") == "timing" and isinstance(payload.get("gap"), (int, float)):
+            metrics.record("web_gap", float(payload["gap"]))   # Jarvis stops talking -> you can talk
+            return {"ok": True}
         print(f"[web mic] {json.dumps(payload)[:400]}")
         return {"ok": True}
 
