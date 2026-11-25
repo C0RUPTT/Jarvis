@@ -25,25 +25,6 @@ def notify_phone(ctx, message: str, title: str = "Jarvis"):
 
 
 @tool(
-    "phone_timer",
-    "Start a timer in the iPhone's Clock app (rings on the phone even offline). Use for any "
-    "timer request. If the phone can't take it right now, a server timer is used instead.",
-    {
-        "minutes": {"type": "number", "description": "Length in minutes (decimals allowed, e.g. 0.5)"},
-        "label": {"type": "string", "description": "What it's for, e.g. pasta"},
-    },
-    ["minutes"],
-)
-def phone_timer(ctx, minutes: float, label: str = "Timer"):
-    announcer = ctx.extras.get("announcer")
-    if announcer and announcer.phone_action("timer", "", minutes=minutes, label=label):
-        return f"Timer for {minutes:g} minutes will start on the phone."
-    from .timers import set_timer
-
-    return set_timer(ctx, int(minutes * 60), f"Your {label} timer is done.") + " (server timer; Telegram will ping you)"
-
-
-@tool(
     "open_on_phone",
     "Open an app or link on the user's iPhone. Works with any URL, including app links: "
     "'maps://?daddr=<address>&dirflg=d' (start driving directions), 'tel:<number>' (call), 'sms:<number>&body=<text>' (text), "
