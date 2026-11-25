@@ -29,6 +29,35 @@ class Runtime:
     _whisper: object | None = None
     claude_watch: str = "always"   # "off" | "once" | "always": announce when Claude Code finishes
     dictation: list | None = None  # long-message mode: pieces collected until the user says "done"
+    awaiting: set = None           # Claude Code sessions we sent a message to and await a reply from
+    siri_inbox: list = None        # things to speak in the ongoing Siri conversation
+    last_siri: float = 0.0         # when the Siri Shortcut last talked to us
+
+    def __post_init__(self):
+        self.awaiting = set()
+        self.siri_inbox = []
+
+    def deliver(self, text: str, urgent: bool = True) -> None:
+        """Tell the user something now. If a Siri conversation is going on, it's spoken there on the
+        next turn (an open Siri conversation blocks spoken notifications); otherwise, or if no Siri
+        turn picks it up within 25 seconds, it's announced as usual."""
+        if time.time() - self.last_siri > 90:
+            self.announcer.announce(text, urgent=urgent)
+            return
+        item = [text]
+        self.siri_inbox.append(item)
+
+        def fallback():
+            if item in self.siri_inbox:
+                self.siri_inbox.remove(item)
+                self.announcer.announce(text, urgent=urgent)
+        import threading
+
+        threading.Timer(25, fallback).start()
+
+    def take_siri_inbox(self) -> list[str]:
+        items, self.siri_inbox[:] = list(self.siri_inbox), []
+        return [i[0] for i in items]
 
     def claude_code_finished(self, label: str = "", summary: str = "", seconds: int = -1,
                              session: str = "") -> str:
@@ -36,6 +65,12 @@ class Runtime:
         from . import claude_sessions
 
         claude_sessions.seen(self.config.data_dir, label, session, summary)
+        sid = claude_sessions.normalize(session) if session else ""
+        if sid and sid in self.awaiting:
+            # A reply to something the user sent through Jarvis: always read it out, however quick.
+            self.awaiting.discard(sid)
+            self.deliver(f"Your {label or 'Claude Code'} session says: {summary[:600] or 'done.'}")
+            return "delivered reply"
         if self.claude_watch == "off":
             return "ignored (announcements off)"
         min_seconds = int(os.getenv("JARVIS_CLAUDE_MIN_SECONDS", "30"))
@@ -46,7 +81,7 @@ class Runtime:
         if summary:
             text += f" {summary[:400]}"
         # Announcements you asked for always get through, with sound.
-        self.announcer.announce(text, urgent=True)
+        self.deliver(text, urgent=True)
         if self.claude_watch == "once":
             self.set_claude_watch(self._watch_default())
         return "announced"

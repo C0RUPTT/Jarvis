@@ -44,18 +44,18 @@ def send_to_claude_session(ctx, session: str, message: str):
 
     target = session.strip()
     if not (target.startswith(("session_", "cse_")) or "claude.ai/code" in target):
-        matches = [s for s in claude_sessions.load(ctx.config.data_dir)
-                   if target.lower().replace(" ", "") in (s["project"] or "").lower().replace("-", "").replace(" ", "")]
-        if not matches:
+        match = claude_sessions.find(ctx.config.data_dir, target)
+        if not match:
             return f"I don't know a session for '{session}' yet. Ask the user for its link, or list_claude_sessions."
-        target = matches[0]["id"]   # most recently active
+        target = match["id"]
     error = claude_sessions.send(target, message)
     if error:
         return f"Couldn't send it: {error}"
-    rt_watch = ctx.extras.get("runtime")
-    if rt_watch is not None and rt_watch.claude_watch == "off":
-        rt_watch.claude_watch = "once"   # they're waiting for this answer
-    return f"Sent to {target}. The user will hear when it's done."
+    rt = ctx.extras.get("runtime")
+    if rt is not None:
+        rt.awaiting.add(claude_sessions.normalize(target))   # its next reply is read out, however quick
+    return (f"Sent to {target}. Its reply will be read to the user when it arrives (they can ask "
+            "'is it ready?'). Say so in a few words.")
 
 
 @tool(

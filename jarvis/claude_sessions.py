@@ -50,3 +50,18 @@ def send(session: str, message: str) -> str:
         return "" if result.get("ok") else str(result.get("error") or "unknown error")
     except (ValueError, IndexError):
         return (p.stderr or p.stdout).strip()[-300:] or "no response"
+
+
+def find(data_dir: Path, name: str) -> dict | None:
+    """The session whose project best matches a spoken name, allowing for dictation slips
+    ("drivers" for "Jarvis"). Most recently active first."""
+    import difflib
+
+    key = name.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    sessions = load(data_dir)
+    norm = [(s["project"] or "").lower().replace("-", "").replace("_", "").replace(" ", "") for s in sessions]
+    for s, n in zip(sessions, norm):
+        if key and n and (key in n or n in key):
+            return s
+    close = difflib.get_close_matches(key, norm, n=1, cutoff=0.6)
+    return sessions[norm.index(close[0])] if close else None

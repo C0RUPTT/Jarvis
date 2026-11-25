@@ -34,9 +34,41 @@ _PATTERNS = [
 _COMPILED = [(name, re.compile(p, re.I)) for name, p in _PATTERNS]
 
 
+RELAY = re.compile(
+    r"^(?:please |can you |could you )?(?:pick up on|pick up|continue|go back to|tell|ask|message|send to)\s+"
+    r"(?:on\s+)?(?:my\s+|the\s+)?(?P<project>[\w .'-]{2,40}?)\s+(?:code\s+|claude\s+code\s+)?session"
+    r"(?:\s*[:,-]\s*|\s+(?:to|and|that)\s+|\s+)(?P<message>.{2,})$", re.I)
+
+
+def _relay(text: str, rt) -> str | None:
+    """'Pick up on my Jarvis session: <message>' -> send straight into that Claude Code session
+    (instant: no Claude call; the session's reply is read out when it arrives)."""
+    m = RELAY.match(text)
+    if not m or rt is None or getattr(rt, "ctx", None) is None:
+        return None
+    from . import claude_sessions
+
+    match = claude_sessions.find(rt.config.data_dir, m.group("project"))
+    if not match:   # name unclear (dictation slip): use the most recently active session, and say its name
+        import time as _time
+
+        recent = [s for s in claude_sessions.load(rt.config.data_dir) if _time.time() - s["last_seen"] < 6 * 3600]
+        match = recent[0] if recent else None
+    if not match:
+        return None   # unknown session: let Claude handle it (it can ask for the link)
+    error = claude_sessions.send(match["id"], m.group("message").strip())
+    if error:
+        return f"I couldn't reach your {match['project']} session: {error}"
+    rt.awaiting.add(match["id"])
+    return f"Sent to your {match['project']} session. I'll read you its reply; ask me 'is it ready?' in a moment."
+
+
 def handle(text: str, rt) -> str | None:
     """Return a reply if this is a fast-path command, otherwise None (send it to Claude)."""
     cleaned = re.sub(r"^(hey |ok |okay )?jarvis[,.!]?\s*", "", text.strip(), flags=re.I).strip(" .!?")
+    relayed = _relay(cleaned, rt)
+    if relayed is not None:
+        return relayed
     if not cleaned or len(cleaned.split()) > MAX_WORDS:
         return None
     for name, pattern in _COMPILED:

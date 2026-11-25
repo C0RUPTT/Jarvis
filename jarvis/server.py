@@ -108,15 +108,23 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     def ask_within_budget(text: str) -> str:
         """Siri gives up on slow requests, so always answer within the budget. A late answer is spoken
         at the start of your next Siri turn, or sent to Telegram if the conversation has ended."""
-        earlier = _take_finished()
+        rt.last_siri = time.time()
+        earlier = _take_finished() + rt.take_siri_inbox()
         if READY_CHECK.match(text.strip(" .!")):
             with pending_lock:
                 waiting = [p for p in pending if not p["delivered"]]
             if waiting and not earlier:   # wait (within budget) for the oldest unfinished answer
                 concurrent.futures.wait([waiting[0]["future"]], timeout=config.siri_budget)
-                earlier = _take_finished()
+                earlier = _take_finished() + rt.take_siri_inbox()
+            if not earlier and rt.awaiting:   # waiting on a Claude Code session's reply
+                deadline = time.time() + config.siri_budget
+                while time.time() < deadline and not rt.siri_inbox:
+                    time.sleep(0.5)
+                earlier = rt.take_siri_inbox()
             if earlier:
                 return " ".join(earlier)
+            if rt.awaiting:
+                return "The session is still working on it. Ask me again in a moment."
             return "Still on it. Give me another moment." if waiting else "Nothing pending; ask away."
 
         future = pool.submit(rt.ask, text)
