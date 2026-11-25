@@ -404,18 +404,21 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             return PlainTextResponse(reply)
         return respond(rt.ask(text), heard=text, with_audio=bool(payload.get("audio", True)))
 
-    @app.post("/api/wait")
-    def wait_for_answer(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
+    @app.api_route("/api/wait", methods=["GET", "POST"])   # GET too: Shortcuts' default method
+    def wait_for_answer(payload: dict | None = Body(default=None), x_jarvis_token: str | None = Header(None),
                         token: str | None = Query(None)):
         """Called by the Siri Shortcut after "One moment": waits (up to the Siri budget) for a late
         answer or a Claude Code session's reply, and returns it to be spoken. "wait": "yes" again
         if it's still not ready."""
+        payload = payload or {}
         check(x_jarvis_token or token or payload.get("token"))
         rt.last_siri = time.time()
+        print("[siri] waiting for a late answer...")
         deadline = time.time() + config.siri_budget
         while time.time() < deadline:
             ready = _take_finished() + rt.take_siri_inbox()
             if ready:
+                print("[siri] late answer handed to Siri")
                 announcer.begin_capture()
                 link = announcer.take_recent_open()
                 announcer.end_capture()
