@@ -282,6 +282,7 @@
     return fetch(`/api/speech/${id}/${i}`, { headers: { "X-Jarvis-Token": token } })
       .then(r => r.ok ? r.blob() : null).catch(() => null);
   }
+  try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: "Jarvis", artist: "Speaking" }); } catch {}
   function playBlob(blob) {
     return new Promise((resolve) => {
       const url = URL.createObjectURL(blob);
@@ -807,7 +808,9 @@
     if (!conversation && state !== "standby") return;
     resumeOnReturn = true;
     diag("app-hidden", { state });
-    stopSpeaking(); stopSR(); stopWake?.(); pauseMic();
+    // Don't cut Jarvis off: iPhone lets audio that's already playing carry on in the background,
+    // so an answer finishes while you look at Maps. Only the listening stops.
+    stopSR(); stopWake?.(); pauseMic();
     if (stream) stream.__stale = true;
   }
   async function onReturn() {
