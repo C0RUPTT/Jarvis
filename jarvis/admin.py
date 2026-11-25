@@ -137,6 +137,15 @@ def auto_update_loop(rt, every_minutes: int = 15) -> None:
         lock = getattr(rt.brain, "lock", None)
         if lock is not None and lock.locked():
             return True
+        # Never restart in the middle of a conversation: while Jarvis restarts (about 20 seconds)
+        # Siri gets an error page instead of an answer ("couldn't convert from Text to Dictionary").
+        now = time.time()
+        if now - getattr(rt, "last_siri", 0) < 10 * 60:
+            return True
+        if now < getattr(rt.announcer, "web_talking_until", 0) + 5 * 60:
+            return True
+        if rt.recent and now - rt.recent[-1]["time"] < 10 * 60:   # Telegram or web chat going on
+            return True
         jobs = rt.jobs.jobs.values() if rt.jobs is not None else []
         return any(j.status == "running" for j in jobs)
 
@@ -153,7 +162,8 @@ def auto_update_loop(rt, every_minutes: int = 15) -> None:
                         rt.announcer.announce(result, reply=True)
             except Exception as e:  # noqa: BLE001 - never let the updater take Jarvis down
                 print(f"[auto-update] {e}")
-            time.sleep(every_minutes * 60)
+            # Waiting on a conversation: check again sooner, so the update lands soon after it ends.
+            time.sleep((3 if busy() else every_minutes) * 60)
 
     threading.Thread(target=loop, daemon=True, name="jarvis-autoupdate").start()
 
