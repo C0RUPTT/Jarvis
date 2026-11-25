@@ -53,6 +53,10 @@ class Announcer:
         silent = (quiet or self.mode == "quiet") and not urgent
         self._add({"type": "say", "text": text, "silent": silent})
         self.push(text, silent=silent)
+        if not silent:                       # spoken alert by text message, if set up (see sms.py)
+            from . import sms
+
+            sms.send_async(text)
         if self.speak and not silent:
             self.speak(text)
 
