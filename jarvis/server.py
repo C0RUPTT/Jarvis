@@ -34,6 +34,10 @@ GOODBYE = re.compile(
     r"(bye|bye[- ]bye|by|buy|good ?-?bye|see (ya|you)( later)?|later|that'?s (all|it)|that will be all|"
     r"i'?m (good|all set|set)|nothing( else)?|no thanks?|nope|stop|end|exit|quit|cancel|dismissed|over and out)"
     r"( for now| jarvis| thanks?| thank you)*[.!?]*$", re.I)
+# The web app's "I'm finished talking": only as the whole utterance, never a "bye" inside a sentence.
+STANDBY = re.compile(r"^(ok(ay)?|alright|all right|thanks?( you)?|thank you|cool|great|perfect|no|so)?([,.! ]*jarvis)?[,.! ]*"
+                     r"(bye|bye[- ]bye|by|buy|good ?-?bye|good ?night|see (ya|you)( later)?|talk (to you )?later|that'?s (all|it)|that will be all|i'?m (done|good|all set|finished)|i am (done|finished)|we'?re (done|good)|done (talking|for now)|nothing( else)?|no thanks?|stop listening|go to sleep|(go (to |on )?)?standby|sleep|dismissed|over and out)"
+                     r"( for now| jarvis| thanks?| thank you| sir| then)*[.!?]*$", re.I)
 FAREWELLS = ["Goodbye, sir.", "Very good, sir.", "I'll be here.", "Until next time, sir.", "Right you are, sir."]
 READY_CHECK = re.compile(r"^(is it |are you )?(ready|done|finished)( yet)?\??$|^(go on|and\??|well\??|still there\??|"
                          r"what did you find\??|any luck\??)$", re.I)
@@ -221,6 +225,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         print(f"\nYou (phone): {heard!r}")
         if len(heard.strip(" .!?,")) < 2:
             return {"heard": "", "reply": "", "speech": "", "audio": None}
+        if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
+            return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
         reply = rt.ask(heard)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        think=round(time.monotonic() - heard_at, 2), on_phone=bool(text))
