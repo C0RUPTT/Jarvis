@@ -7,6 +7,7 @@
 # variable: in your Claude Code cloud environment settings, or in your shell on a computer.
 [ -n "${JARVIS_NOTIFY_URL:-}" ] || exit 0
 label="$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")"
-curl -s -m 5 -o /dev/null -X POST "${JARVIS_NOTIFY_URL}&label=${label}" \
+case "$JARVIS_NOTIFY_URL" in *\?*) sep="&" ;; *) sep="?" ;; esac
+curl -s -m 5 -o /dev/null -X POST "${JARVIS_NOTIFY_URL}${sep}label=${label}" \
   -H "Content-Type: application/json" --data-binary @- >/dev/null 2>&1 || true
 exit 0
