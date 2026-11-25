@@ -38,6 +38,19 @@ GOODBYE = re.compile(
 STANDBY = re.compile(r"^(ok(ay)?|alright|all right|thanks?( you)?|thank you|cool|great|perfect|no|so)?([,.! ]*jarvis)?[,.! ]*"
                      r"(bye|bye[- ]bye|by|buy|good ?-?bye|good ?night|see (ya|you)( later)?|talk (to you )?later|that'?s (all|it)|that will be all|i'?m (done|good|all set|finished)|i am (done|finished)|we'?re (done|good)|done (talking|for now)|nothing( else)?|no thanks?|stop listening|go to sleep|(go (to |on )?)?standby|sleep|dismissed|over and out)"
                      r"( for now| jarvis| thanks?| thank you| sir| then)*[.!?]*$", re.I)
+def is_standby(text: str) -> bool:
+    """'I'm done' / 'goodbye' / 'stop listening' as the whole thing, or as the last sentence after a
+    short acknowledgement ("Sounds good. I'm done.", "Thanks, goodbye"); never inside a longer
+    thought ("I'm done with my laundry")."""
+    text = text.strip()
+    if STANDBY.match(text):
+        return True
+    parts = [p.strip() for p in re.split(r"[.!?,;]+\s*", text) if p.strip()]
+    if len(parts) < 2 or not STANDBY.match(parts[-1]):
+        return False
+    return len(" ".join(parts[:-1]).split()) <= 6   # "sounds good", "okay thanks Jarvis", "perfect"
+
+
 FAREWELLS = ["Goodbye, sir.", "Very good, sir.", "I'll be here.", "Until next time, sir.", "Right you are, sir."]
 READY_CHECK = re.compile(r"^(ok(ay)?,? |yes,? |yeah,? )?((is it |are you )?(ready|done|finished)( yet)?|go on|go ahead|"
                          r"continue|carry on|and|well|still there|what did you find|any luck|tell me|let'?s hear it)"
@@ -274,7 +287,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if _echo_of_jarvis(heard):   # Jarvis's own voice picked up by the mic: never a request
             print(f"[web] ignored Jarvis's own words: {heard!r}")
             return {"heard": "", "reply": "", "speech": "", "audio": None}
-        if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
+        if rt.dictation is None and is_standby(heard):   # "I'm done": no model call
             return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
         queued_at = time.monotonic()
         with web_turn:   # one app message at a time, so a newer one can replace those still queued

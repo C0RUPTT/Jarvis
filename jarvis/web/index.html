@@ -214,6 +214,14 @@
   // "I'm done", "goodbye", "stop listening"... only as the whole thing you said, never a "bye"
   // at the end of a normal sentence. Puts Jarvis on standby without asking the server anything.
   const GOODBYE = /^(ok(ay)?|alright|all right|thanks?( you)?|thank you|cool|great|perfect|no|so)?([,.! ]*jarvis)?[,.! ]*(bye|bye[- ]bye|by|buy|good ?-?bye|good ?night|see (ya|you)( later)?|talk (to you )?later|that'?s (all|it)|that will be all|i'?m (done|good|all set|finished)|i am (done|finished)|we'?re (done|good)|done (talking|for now)|nothing( else)?|no thanks?|stop listening|go to sleep|(go (to |on )?)?standby|sleep|dismissed|over and out)( for now| jarvis| thanks?| thank you| sir| then)*[.!?]*$/i;
+  // Same rule as the server: the whole utterance, or the last sentence after a short acknowledgement.
+  function isStandby(text) {
+    text = (text || "").trim();
+    if (GOODBYE.test(text)) return true;
+    const parts = text.split(/[.!?,;]+\s*/).map(p => p.trim()).filter(Boolean);
+    if (parts.length < 2 || !GOODBYE.test(parts[parts.length - 1])) return false;
+    return parts.slice(0, -1).join(" ").split(/\s+/).length <= 6;
+  }
   let state = "idle";          // idle | listening | thinking | speaking
   let conversation = false;    // hands-free mode on?
   let lastEventId = 0, wakeLock = null;
@@ -512,7 +520,7 @@
       const now = performance.now();
       if (text && now - lastHeard > 1500) {                       // a 1.5-second pause: they've finished
         done = true; stopSR(); turnEndedAt = lastHeard;
-        if (GOODBYE.test(text.trim())) goStandby(); else sendText(text);
+        if (isStandby(text)) goStandby(); else sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
         done = true; stopSR(); listen();
       } else if (!audioStarted && !text && now - started > 8000) {   // the mic never came on: try again
@@ -542,7 +550,7 @@
       if (!data || !data.heard) return listen();
       add("you", data.heard);
       await reply(data);
-      if (data.standby || GOODBYE.test(data.heard)) return goStandby();
+      if (data.standby || isStandby(data.heard)) return goStandby();
     } catch (e) { add("sys", "⚠ " + e.message); }
     if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
     listen();
@@ -652,7 +660,7 @@
       if (!data || !data.heard) return listen();        // nothing intelligible: keep listening
       add("you", data.heard);
       await reply(data);
-      if (data.standby || GOODBYE.test(data.heard)) return goStandby();
+      if (data.standby || isStandby(data.heard)) return goStandby();
     } catch (e) { add("sys", "⚠ " + e.message); }
     if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
     listen();
