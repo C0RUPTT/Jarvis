@@ -30,6 +30,9 @@ _PATTERNS = [
     ("missed", r"^(so,? |ok(ay)?,? )?(what did i miss|catch me up|anything new|what'?s new|"
                r"any updates|what happened while i was (away|gone|out))"),
     ("jobs", r"^(how'?s|how is|how are|what'?s the status of|status of) (the |my )?(job|jobs|build|app|project)s?"),
+    ("time", r"^(what'?s|what is|tell me) the time( now| right now| please)?$|^what time is it( now| right now| please)?$|"
+             r"^(do you (know|have) )?the time( please)?$"),
+    ("date", r"^(what'?s|what is) (the date|today'?s date)( today)?$|^what day is (it|today)$|^what'?s today$"),
 ]
 _COMPILED = [(name, re.compile(p, re.I)) for name, p in _PATTERNS]
 
@@ -265,4 +268,19 @@ def _claude_long(rt) -> str:
 
 
 _ACTIONS = {"claude_every": _claude_every, "claude_long": _claude_long, "read_unread": _read_unread, "claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
-            "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}
+            "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs,
+            "time": lambda rt: _time(), "date": lambda rt: _date()}
+
+
+def _time() -> str:
+    """Instant, and always the exact clock time (never "about three minutes to two")."""
+    from datetime import datetime
+
+    return f"It's {datetime.now():%I:%M %p}, sir.".replace("It's 0", "It's ")
+
+
+def _date() -> str:
+    from datetime import datetime
+
+    now = datetime.now()
+    return f"It's {now:%A}, {now:%B} {now.day}."
