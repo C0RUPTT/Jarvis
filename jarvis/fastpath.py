@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import re
 
-MAX_WORDS = 9
+MAX_WORDS = 12
 
 _PATTERNS = [
+    ("claude_always", r"^(always|every time)?\s*(tell|let) me (know )?(every time|whenever|each time) claude( code)? (is done|finishes|is finished)|^always (tell|let) me (know )?when claude( code)? (is done|finishes|is finished)"),
+    ("claude_once", r"^(please )?(tell|let) me (know )?when claude( code)?('s| is)? (done|finished|finishes)|^(ping|notify) me when claude( code)? (is done|finishes)"),
+    ("claude_off", r"^(stop|don'?t) (telling|tell|notifying|notify) me (about|when) claude"),
     ("update", r"^(please )?(update yourself|update jarvis|check for updates|install (the )?updates|get the latest( version)?)$"),
     ("morning", r"^(hey |hi |ok(ay)? )?(good )?morning( jarvis)?$|^i'?m (up|awake)( now)?$|^(start|begin) my day$"),
     ("hold", r"^(please )?(hold (everything|it all|all|my (messages|notifications|stuff))|"
@@ -112,4 +115,20 @@ def _update(rt) -> str:
     return result.split("\n")[0] if result.startswith("Updated") else result
 
 
-_ACTIONS = {"update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}
+def _claude_once(rt) -> str:
+    rt.claude_watch = "once"
+    return "Will do. I'll tell you the moment Claude Code finishes."
+
+
+def _claude_always(rt) -> str:
+    rt.claude_watch = "always"
+    return "Understood. I'll tell you every time Claude Code finishes, until you say stop."
+
+
+def _claude_off(rt) -> str:
+    rt.claude_watch = "off"
+    return "Righto, no more Claude Code updates."
+
+
+_ACTIONS = {"claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
+            "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}

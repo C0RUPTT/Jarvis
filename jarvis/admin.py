@@ -6,6 +6,7 @@
     /logs     the last lines of Jarvis's log
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
+    /notifysetup  public link so Claude Code can tell Jarvis when it's done
     /help     list of commands
 """
 
@@ -203,6 +204,40 @@ def set_timezone(arg: str = "") -> str:
     return f"Time zone set to {name} (it's {datetime.now():%I:%M %p} there). Restarting to apply it everywhere."
 
 
+FUNNEL_PORT = 8443   # Funnel only on this port and only for /notify; the main Jarvis stays private
+
+
+def notify_setup(config) -> str:
+    """Expose ONLY the notify endpoint publicly (Tailscale Funnel, free), so Claude Code sessions
+    anywhere can tell Jarvis they're done."""
+    import json
+    import re
+
+    tailscale = shutil.which("tailscale")
+    if not tailscale:
+        return "Tailscale isn't installed on this server."
+    code, out = _run(["sudo", "-n", "timeout", "40", tailscale, "funnel", "--bg", f"--https={FUNNEL_PORT}",
+                      "--set-path=/notify", f"http://127.0.0.1:{config.port}/api/notify"], timeout=60)
+    link = re.search(r"https://login\.tailscale\.com/\S+", out)
+    if link:
+        return (f"Tailscale needs you to allow Funnel once. Open this, approve, then send /notifysetup again:\n"
+                f"{link.group(0)}")
+    if code != 0:
+        return f"Setting up the public notify link failed:\n{out[-600:]}"
+    _, st = _run([tailscale, "status", "--json"], timeout=15)
+    try:
+        host = json.loads(st)["Self"]["DNSName"].rstrip(".")
+    except (ValueError, KeyError):
+        host = "<your-server>.ts.net"
+    url = f"https://{host}:{FUNNEL_PORT}/notify?token={config.notify_token}"
+    return (
+        "Public notify link is live (it can only send 'Claude Code is done' pings; nothing else is public):\n\n"
+        f"{url}\n\n"
+        "Next: give this link to your Claude Code sessions as the environment variable JARVIS_NOTIFY_URL "
+        "(I'll walk you through it), then say 'let me know when Claude Code is done'."
+    )
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
@@ -211,5 +246,6 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
+        "notifysetup": lambda: notify_setup(config),
         "help": lambda: __doc__.strip(),
     }

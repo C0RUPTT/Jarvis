@@ -41,6 +41,7 @@ class Config:
     host: str
     port: int
     token: str
+    notify_token: str          # low-privilege key: can only send "Claude Code finished" pings
     ntfy_topic: str            # fallback push notifications via the ntfy app
     telegram_token: str        # from @BotFather
     telegram_user_id: str      # your numeric id (from @userinfobot); the bot ignores everyone else
@@ -81,6 +82,7 @@ class Config:
             host=os.getenv("JARVIS_HOST", "127.0.0.1"),
             port=int(os.getenv("JARVIS_PORT", "8765")),
             token=os.getenv("JARVIS_TOKEN") or _stored_token(data_dir),
+            notify_token=os.getenv("JARVIS_NOTIFY_TOKEN") or _stored_token(data_dir, "notify-token"),
             ntfy_topic=os.getenv("JARVIS_NTFY_TOPIC", ""),
             telegram_token=os.getenv("JARVIS_TELEGRAM_TOKEN", ""),
             telegram_user_id=os.getenv("JARVIS_TELEGRAM_USER_ID", ""),
@@ -111,9 +113,9 @@ def apply_timezone(name: str) -> bool:
     return True
 
 
-def _stored_token(data_dir: Path) -> str:
+def _stored_token(data_dir: Path, name: str = "token") -> str:
     """A random secret the phone must present. Generated once and kept in the data folder."""
-    path = data_dir / "token"
+    path = data_dir / name
     if not path.exists():
         path.write_text(secrets.token_urlsafe(24))
         try:

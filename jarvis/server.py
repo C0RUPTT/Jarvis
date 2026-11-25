@@ -186,6 +186,22 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         check(x_jarvis_token or token or payload.get("token"))
         return PlainTextResponse(clean_for_speech(rt.morning()))
 
+    @app.post("/api/notify")
+    def notify(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
+               token: str | None = Query(None), label: str = Query("")):
+        """Claude Code finished a task. Called by its Stop hook (scripts/claude-notify-hook.sh), usually
+        through the public Tailscale Funnel link, so it accepts the low-privilege notify token."""
+        key = x_jarvis_token or token or ""
+        if not (key and (hmac.compare_digest(key, config.notify_token) or hmac.compare_digest(key, config.token))):
+            raise HTTPException(status_code=401, detail="Bad or missing token")
+        if payload.get("stop_hook_active"):   # Claude is continuing because of another hook; not done yet
+            return {"result": "ignored (still working)"}
+        if not label:
+            cwd = str(payload.get("cwd") or "")
+            label = cwd.rstrip("/").rsplit("/", 1)[-1] if cwd else ""
+        summary = str(payload.get("last_assistant_message") or "")
+        return {"result": rt.claude_code_finished(label, clean_for_speech(summary))}
+
     @app.post("/api/reset")
     def reset(x_jarvis_token: str | None = Header(None)):
         check(x_jarvis_token)

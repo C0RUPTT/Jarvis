@@ -26,6 +26,21 @@ class Runtime:
     jobs: object | None
     telegram: object | None
     _whisper: object | None = None
+    claude_watch: str = "off"      # "off" | "once" | "always": announce when Claude Code finishes
+
+    def claude_code_finished(self, label: str = "", summary: str = "") -> str:
+        """Called by the Claude Code hook (POST /api/notify) when a Claude Code session finishes a task."""
+        if self.claude_watch == "off":
+            return "ignored (not watching)"
+        where = f" on {label}" if label else ""
+        text = f"Claude Code is done{where}."
+        if summary:
+            text += f" {summary[:300]}"
+        # The user explicitly asked for this, so it always gets through, with sound.
+        self.announcer.announce(text, urgent=True)
+        if self.claude_watch == "once":
+            self.claude_watch = "off"
+        return "announced"
 
     def transcribe(self, audio) -> str:
         if self._whisper is None:
