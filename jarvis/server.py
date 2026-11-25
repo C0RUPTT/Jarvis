@@ -554,10 +554,23 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         return {"ok": True}
 
     @app.get("/api/events")
-    def events(after: int = 0, x_jarvis_token: str | None = Header(None)):
-        """Things Jarvis says unprompted (timers, reminders) and phone actions to perform."""
+    def events(after: int = 0, talking: int = 0, x_jarvis_token: str | None = Header(None)):
+        """Things Jarvis says unprompted (timers, reminders, finished work) and phone actions.
+        talking=1: the web app is in a voice conversation and will say them out loud itself, so the
+        Telegram copy goes out silently instead of dinging over the conversation."""
         check(x_jarvis_token)
+        if talking:
+            announcer.web_talking_until = time.time() + 15
         return {"events": announcer.events_since(after)}
+
+    @app.post("/api/voice")
+    def voice(payload: dict = Body(...), x_jarvis_token: str | None = Header(None)):
+        """Jarvis's voice for any text (e.g. a 'job done' announcement the web app reads out)."""
+        check(x_jarvis_token)
+        if payload.get("announcement"):   # it's being read out now: "what did I miss" needn't repeat it
+            announcer.mark_read(str(payload.get("text", "")))
+        parts = _speech_parts(clean_for_speech(str(payload.get("text", ""))[:3000])) if config.online_voice else []
+        return {"speech_id": _start_speech(parts) if parts else "", "speech_parts": parts}
 
     @app.on_event("shutdown")
     def shutdown():

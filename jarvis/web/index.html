@@ -365,7 +365,7 @@
     if (rec) { const r = rec; rec = null; r.onend = r.onresult = r.onerror = null; try { r.abort(); } catch {} }
   }
   function listenOnPhone() {
-    setState("listening");
+    setState("listening"); userTalking = false;
     let text = "", lastHeard = 0, done = false;
     const started = performance.now();
     rec = new SR();
@@ -377,7 +377,7 @@
         // Some iPhones repeat the whole sentence in each result: replace instead of appending.
         joined = t.toLowerCase().startsWith(joined.toLowerCase()) ? t : (joined + " " + t).trim();
       }
-      text = joined; lastHeard = performance.now();
+      text = joined; lastHeard = performance.now(); userTalking = true;
       if (!document.body.classList.contains("voice")) statusEl.textContent = text;
       orb.style.setProperty("--level", 0.45 + Math.random() * 0.25);
     };
@@ -403,7 +403,7 @@
   }
 
   async function sendText(text) {
-    setState("thinking");
+    userTalking = false; setState("thinking");
     try {
       const { id } = await api("/api/talk_text", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }) });
@@ -414,6 +414,7 @@
       await reply(data);
       if (GOODBYE.test(data.heard)) return endConversation();
     } catch (e) { add("sys", "⚠ " + e.message); }
+    if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
     listen();
   }
 
@@ -422,7 +423,7 @@
     if (useSR) return listenOnPhone();
     try { if (!stream) await openMic(); }
     catch (e) { conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return; }
-    setState("listening");
+    setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
     const calibrateUntil = performance.now() + 400;
@@ -433,7 +434,7 @@
       if (now < calibrateUntil) { noiseFloor = Math.max(0.004, noiseFloor * 0.7 + rms * 0.3); return; }
       const threshold = Math.max(noiseFloor * 3, 0.02);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
-      if (rms > threshold) { lastLoud = now; if (!speechStart) speechStart = now; }
+      if (rms > threshold) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
       if (speechStart && now - lastLoud > 1500) {                // a 1.5-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
@@ -467,7 +468,7 @@
     return null;
   }
   async function send(blob) {
-    pauseMic();
+    userTalking = false; pauseMic();
     setState("thinking");
     const form = new FormData();
     form.append("audio", blob, mime.includes("mp4") ? "speech.mp4" : "speech.webm");
@@ -480,6 +481,7 @@
       await reply(data);
       if (GOODBYE.test(data.heard)) return endConversation();
     } catch (e) { add("sys", "⚠ " + e.message); }
+    if (announcements.length) { setState("idle"); return drainAnnouncements(); }   // it resumes listening
     listen();
   }
   // Carry on from Siri or Telegram: show the last few exchanges (the conversation itself
@@ -568,24 +570,52 @@
   };
 
   // ---------- things Jarvis says on its own (timers, reminders, phone actions) ----------
+  const announcements = [];
+  let announcing = false, userTalking = false;
   async function poll() {
     if (!token) return;
     try {
-      const { events } = await api("/api/events?after=" + lastEventId);
+      const { events } = await api("/api/events?after=" + lastEventId + (conversation ? "&talking=1" : ""));
       for (const ev of events) {
         if (lastEventId === 0 && Date.now() / 1000 - ev.time > 60) { lastEventId = ev.id; continue; } // stale
         lastEventId = Math.max(lastEventId, ev.id);
         if (ev.type === "say") {
           add("jarvis", ev.text);
-          if (state === "idle" || state === "listening") speakLocally(ev.text, () => {});
+          announcements.push(ev.text);
         } else if (ev.type === "open") {
           add("jarvis", ev.text, ev.url);
           try { location.href = ev.url; } catch {}
         }
       }
     } catch {}
+    drainAnnouncements();
   }
   setInterval(poll, 4000); poll();
+
+  // Finished work, relayed session replies, reminders: said out loud in Jarvis's voice. Never over
+  // you: if you're mid-sentence or Jarvis is answering, it waits for the end of that turn.
+  async function drainAnnouncements() {
+    if (!conversation) { announcements.length = 0; return; }   // not talking: it's in the transcript and on Telegram
+    if (announcing || !announcements.length) return;
+    if (state === "thinking" || state === "speaking" || userTalking) return;   // called again after the turn
+    announcing = true;
+    const resume = conversation && state === "listening";
+    if (resume) pauseMic();
+    try {
+      while (announcements.length) {
+        const text = announcements.shift();
+        setState("speaking");
+        let data = { speech: text };
+        try { data = { ...(await api("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, announcement: true }) })), speech: text }; } catch {}
+        await speak(data);
+      }
+    } finally {
+      announcing = false;
+      setState(conversation ? "listening" : "idle");
+      if (resume || conversation) listen();
+    }
+  }
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState === "visible" && conversation && !wakeLock) {
       try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}

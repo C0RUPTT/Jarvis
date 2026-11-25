@@ -52,8 +52,9 @@ class Announcer:
             return
         silent = (quiet or self.mode == "quiet") and not urgent
         self._add({"type": "say", "text": text, "silent": silent})
-        self.push(text, silent=silent)
-        if not silent:                       # spoken alert by text message, if set up (see sms.py)
+        web_says_it = time.time() < self.web_talking_until   # the web app will speak it right now
+        self.push(text, silent=silent or web_says_it)
+        if not silent and not web_says_it:   # spoken alert by text message, if set up (see sms.py)
             from . import sms
 
             sms.send_async(text)
@@ -99,6 +100,7 @@ class Announcer:
             return True
         return False
 
+    web_talking_until: float = 0.0   # the web app is in a voice conversation until then
     _unread: list = []   # notifications sent to the phone but not yet read out (for "read my notifications")
 
     def take_unread(self, max_age_hours: float = 24) -> list[str]:
@@ -108,6 +110,13 @@ class Announcer:
             items, self._unread = [i for i in self._unread if i[0] >= cutoff], []
         items = _drop_repeats(items)
         return [f"At {datetime.fromtimestamp(t):%I:%M %p}".replace("At 0", "At ") + f": {text}" for t, text in items]
+
+    def mark_read(self, text: str) -> None:
+        from .clock import exact_times
+
+        text = exact_times(text)
+        with self._lock:
+            self._unread = [i for i in self._unread if i[1] != text]
 
     def push(self, text: str, silent: bool = False, title: str = "Jarvis") -> bool:
         """Send a notification to the phone. Returns False if no channel is set up."""
