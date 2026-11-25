@@ -77,3 +77,19 @@ def run_phone_shortcut(ctx, name: str, text: str = ""):
     if text:
         url += f"&input=text&text={quote(text)}"
     return open_on_phone(ctx, url, f"Run Shortcut: {name}")
+
+
+@tool(
+    "open_jarvis_app",
+    "Open the Jarvis web app on the user's phone (the voice app with the orb): use when they say "
+    "'switch to the app', 'open the Jarvis app', 'the web app', 'let's continue in the app', or any "
+    "wording that means moving this conversation to Jarvis's own app. Never ask 'which app?' for these.",
+)
+def open_jarvis_app(ctx):
+    from ..fastpath import app_link
+
+    rt = ctx.extras.get("runtime")
+    if rt is None:
+        return "The phone link isn't available in this mode."
+    rt.announcer.open_on_phone(app_link(rt), "Jarvis")
+    return "Opening the Jarvis app on the phone. Tell the user to tap the screen once to keep talking."

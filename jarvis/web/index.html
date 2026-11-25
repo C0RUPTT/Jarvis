@@ -384,7 +384,9 @@
   // If the phone refuses (some iOS versions block it in home-screen apps), we fall back to
   // recording and sending the audio, and remember that choice.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (safeGet("jarvis-stt-v") !== "2") { safeSet("jarvis-stt", ""); safeSet("jarvis-stt-v", "2"); } // retry after a fix
+  if (safeGet("jarvis-stt-v") !== "3") { safeSet("jarvis-stt", ""); safeSet("jarvis-stt-v", "3"); } // retry after a fix
+  let lastTap = 0;
+  document.addEventListener("pointerdown", () => { lastTap = Date.now(); }, true);
   let useSR = !!SR && safeGet("jarvis-stt") !== "server", rec = null, srTimer = null, srCaptureFails = 0, srNetworkFails = 0;
 
   // Diagnostics: what the microphone is doing, in Jarvis's log (/logs), to fix problems remotely.
@@ -399,11 +401,12 @@
   }
   function listenOnPhone() {
     setState("listening"); userTalking = false;
-    let text = "", lastHeard = 0, done = false;
+    let text = "", lastHeard = 0, done = false, audioStarted = false;
     const started = performance.now();
     rec = new SR();
     rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
     rec.onresult = (e) => {
+      audioStarted = true;
       let joined = "";
       for (let i = 0; i < e.results.length; i++) {
         const t = e.results[i][0].transcript.trim();
@@ -414,14 +417,20 @@
       if (!document.body.classList.contains("voice")) statusEl.textContent = text;
       orb.style.setProperty("--level", 0.45 + Math.random() * 0.25);
     };
-    let audioStarted = false;
-    rec.onaudiostart = () => { audioStarted = true; srCaptureFails = 0; };
+    // Any sign the mic is live counts (iPhone does not always send "audiostart").
+    rec.onaudiostart = rec.onstart = rec.onsoundstart = rec.onspeechstart = () => { audioStarted = true; srCaptureFails = 0; };
     rec.onerror = (e) => {
       diag("sr-error", { error: e.error });
-      if (["not-allowed", "service-not-allowed"].includes(e.error)) {   // the phone refuses: remember
-        stopSR(); useSR = false; safeSet("jarvis-stt", "server");
-        add("sys", "Using the server for speech recognition (the phone's own isn't available here).");
-        listen();
+      if (["not-allowed", "service-not-allowed"].includes(e.error)) {
+        done = true; stopSR();
+        if (Date.now() - lastTap < 3000) {   // refused right after you tapped: the phone really says no
+          useSR = false; safeSet("jarvis-stt", "server");
+          add("sys", "Using the server for speech recognition (the phone's own isn't available here).");
+          listen();
+        } else {   // iPhone wants a tap before listening again (e.g. after coming back to the app)
+          conversation = false; pauseMic();
+          setState("idle", "Tap to keep talking");
+        }
       } else if (e.error === "network") {   // weak signal: the phone's recognition needs Apple's servers
         done = true; stopSR();
         if (++srNetworkFails >= 2) { useSR = false; diag("sr-fallback", { reason: "network" });
@@ -444,13 +453,14 @@
         if (GOODBYE.test(text.trim())) goStandby(); else sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
         done = true; stopSR(); listen();
-      } else if (!audioStarted && now - started > 4000) {         // the mic never came on: try again
+      } else if (!audioStarted && !text && now - started > 8000) {   // the mic never came on: try again
         done = true; stopSR(); diag("sr-no-audio", { fails: srCaptureFails + 1 });
         if (++srCaptureFails >= 3) useSR = false;                   // this time, record instead
         setTimeout(listen, 400);
       }
     }, 100);
-    try { rec.start(); } catch (e) { stopSR(); useSR = false; listen(); }
+    try { rec.start(); }
+    catch (e) { diag("sr-start-failed", { error: String(e?.name || e) }); stopSR(); conversation = false; setState("idle", "Tap to keep talking"); }
   }
 
   async function sendText(text) {

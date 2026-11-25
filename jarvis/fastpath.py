@@ -35,13 +35,47 @@ _COMPILED = [(name, re.compile(p, re.I)) for name, p in _PATTERNS]
 
 
 # "Switch to the app": hand a Siri conversation over to the web app (same conversation, no time limits).
-HANDOFF = re.compile(
-    r"^(?:ok(?:ay)?,? |hey jarvis,? |jarvis,? )?(?:let'?s |can we |could we |please |i want to )?"
-    r"(?:switch|move|go|take (?:this|it)|continue|carry on|talk|keep talking|finish (?:this|it)|pick (?:this|it) up)"
-    r"\s+(?:over\s+)?(?:to|in|on)\s+(?:the\s+)?(?:jarvis\s+|web\s+)?app(?:\s+(?:instead|now|please))*\W*$"
-    r"|^(?:please )?open (?:the )?(?:jarvis|web) app\W*$|^open (?:yourself|jarvis)\W*$"
-    r"|^(?:ok(?:ay)?,? |jarvis,? )?(?:let'?s )?(?:switch|swap|change)(?: over)?(?: to)?(?: the)? (?:web )?apps?(?: mode)?(?: now| please)?\W*$"
-    r"|^(?:web )?app mode\W*$|^hand (?:it|this|me) (?:off|over)(?: to the app)?\W*$", re.I)
+# "Switch to the app": hand a Siri conversation over to the web app (same conversation, no time limits).
+# Dictation words it many ways ("switch to the Jarvis web app", "open Jarvis app", "go to the app"),
+# so: a short request with a switch/open-type verb whose only target is "the app" / "Jarvis app" /
+# "web app" / "your app" (never another app's name, so "open the YouTube app" still opens YouTube).
+_HANDOFF_VERB = re.compile(r"\b(switch|swap|change|move|go|open|launch|use|continue|carry on|talk|keep talking|"
+                           r"take (this|it)|hand (it|this|me)|bring up|pull up|pick (this|it) up|finish (this|it))\b", re.I)
+_HANDOFF_TARGET = re.compile(
+    r"\b(?:to |in |on |over |into |up |off |the |your |my |jarvis'?s? |jarvis |web |own )*app(?:s| mode)?\b", re.I)
+_HANDOFF_ONLY = re.compile(
+    r"^(?:ok(?:ay)?|hey|so|um|uh|please|let'?s|can we|could we|can you|could you|i want to|i'?d like to|"
+    r"jarvis|switch|swap|change|move|go|open|launch|use|continue|carry|on|talk|keep|talking|take|this|it|hand|"
+    r"me|off|over|bring|pull|up|pick|finish|to|in|into|the|your|my|jarvis'?s?|web|own|app|apps|mode|now|"
+    r"instead|please|then|yourself)(?:[\s,.!?']+|$)", re.I)
+
+
+def is_handoff(text: str) -> bool:
+    t = text.strip().strip(".!?").lower()
+    if not t or len(t.split()) > 10:
+        return False
+    if re.fullmatch(r"(?:open |switch to |go to )?(?:yourself|jarvis)", t) or re.fullmatch(r"(?:web |jarvis )?app mode", t):
+        return True
+    if re.fullmatch(r"hand (?:it|this|me) (?:off|over)(?: to the app)?", t):
+        return True
+    if not (_HANDOFF_VERB.search(t) and _HANDOFF_TARGET.search(t)):
+        return False
+    rest = t
+    while rest:   # every word must be one of the handoff words: any other word names something else
+        m = _HANDOFF_ONLY.match(rest)
+        if not m:
+            return False
+        rest = rest[m.end():]
+    return True
+
+
+class _Handoff:   # keeps HANDOFF.match(text) working for older callers
+    @staticmethod
+    def match(text: str):
+        return is_handoff(text) or None
+
+
+HANDOFF = _Handoff()
 
 
 def app_link(rt) -> str:
