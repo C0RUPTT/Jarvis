@@ -104,6 +104,13 @@ def run_voice(config: Config, push_to_talk: bool) -> None:
 
 
 def main() -> None:
+    # Under systemd, stdout is a pipe and Python buffers it, so log lines (and /logs) lagged far
+    # behind. Line buffering makes every message show up immediately.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(prog="jarvis", description="A voice assistant powered by Claude.")
     parser.add_argument("mode", nargs="?", choices=["serve", "doctor", "stats"],
                         help="serve: phone server | doctor: check setup | stats: measurements")
