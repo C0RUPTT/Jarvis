@@ -100,6 +100,7 @@ class Announcer:
             return True
         return False
 
+    _recent_pushes: dict = {}
     web_talking_until: float = 0.0   # the web app is in a voice conversation until then
     _unread: list = []   # notifications sent to the phone but not yet read out (for "read my notifications")
 
@@ -115,6 +116,15 @@ class Announcer:
         from .clock import exact_times
 
         text = exact_times(text)
+        # Guard: the same notification again within two minutes is a repeat, not news.
+        key = " ".join(text.lower().split())
+        now = time.time()
+        with self._lock:
+            self._recent_pushes = {k: t for k, t in self._recent_pushes.items() if now - t < 120}
+            if key in self._recent_pushes:
+                print(f"[notify] skipped a repeat: {text[:60]!r}")
+                return True
+            self._recent_pushes[key] = now
         with self._lock:
             self._unread = [i for i in self._unread if i[1] != text]
 
@@ -123,6 +133,15 @@ class Announcer:
         from .clock import exact_times
 
         text = exact_times(text)
+        # Guard: the same notification again within two minutes is a repeat, not news.
+        key = " ".join(text.lower().split())
+        now = time.time()
+        with self._lock:
+            self._recent_pushes = {k: t for k, t in self._recent_pushes.items() if now - t < 120}
+            if key in self._recent_pushes:
+                print(f"[notify] skipped a repeat: {text[:60]!r}")
+                return True
+            self._recent_pushes[key] = now
         with self._lock:
             self._unread = (self._unread + [(time.time(), text)])[-20:]
         if self.telegram is not None:

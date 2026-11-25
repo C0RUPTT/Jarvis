@@ -364,6 +364,7 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
         from .voice.tts import synthesize_mp3
 
         bot = TelegramBot(config.telegram_token, int(config.telegram_user_id))
+        bot.offset_file = config.data_dir / "telegram-offset"
         bot.on_text = rt.ask
         bot.transcribe = rt.transcribe
         bot.synthesize = lambda text: synthesize_mp3(text, config.online_voice)

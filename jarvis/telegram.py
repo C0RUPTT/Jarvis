@@ -70,7 +70,16 @@ class TelegramBot:
     def start(self) -> None:
         threading.Thread(target=self._poll_loop, daemon=True, name="jarvis-telegram").start()
 
+    offset_file = None   # set by runtime: remembers which messages were handled, across restarts
+
     def _poll_loop(self) -> None:
+        # After a restart (every update) Telegram re-sends messages we handled but hadn't confirmed
+        # yet, and each would be answered again. Start from the last one we handled.
+        try:
+            if self.offset_file and self.offset_file.exists():
+                self.offset = max(self.offset, int(self.offset_file.read_text().strip() or 0))
+        except (OSError, ValueError):
+            pass
         while True:
             updates = self._call("getUpdates", {"offset": self.offset, "timeout": 50}, timeout=60)
             if updates is None:
@@ -78,6 +87,11 @@ class TelegramBot:
                 continue
             for update in updates:
                 self.offset = update["update_id"] + 1
+                try:
+                    if self.offset_file:
+                        self.offset_file.write_text(str(self.offset))
+                except OSError:
+                    pass
                 try:
                     self._handle(update)
                 except Exception as e:  # noqa: BLE001
