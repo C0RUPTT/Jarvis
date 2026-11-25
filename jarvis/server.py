@@ -150,6 +150,26 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if not text:
             raise HTTPException(status_code=400, detail="No text")
         print(f"\nYou: {text}")
+        if format == "siri":
+            # For the Siri Shortcut: what to say, plus phone actions for the Shortcut to perform.
+            started = time.monotonic()
+            announcer.begin_capture()
+            try:
+                reply = clean_for_speech(ask_within_budget(text))
+            finally:
+                actions = announcer.end_capture()
+            metrics.record("siri", time.monotonic() - started, late=reply == STILL_WORKING)
+            opens = [a for a in actions if a["type"] == "open"]
+            timers = [a for a in actions if a["type"] == "timer"]
+            result = {
+                "say": reply,
+                "open": opens[-1]["url"] if opens else "",
+                "timer_minutes": timers[-1]["minutes"] if timers else 0,
+            }
+            for extra in opens[:-1]:   # only one link can open at a time; send the rest to Telegram
+                announcer.push(f"{extra['text']}\n{extra['url']}")
+            print(f"JARVIS: {result}")
+            return result
         if format == "text":
             started = time.monotonic()
             reply = clean_for_speech(ask_within_budget(text))

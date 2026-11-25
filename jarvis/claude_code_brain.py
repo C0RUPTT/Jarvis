@@ -10,6 +10,7 @@ about 38k. Heavy work (coding, building apps) goes to background jobs that run f
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -48,6 +49,7 @@ class ClaudeCodeBrain:
         self.lines: queue.Queue = queue.Queue()
         self.lock = threading.Lock()
         self.last_usage: dict | None = None
+        self.connectors: list[str] = []      # MCP servers Claude Code reported at startup
 
     # -- process management --------------------------------------------------
 
@@ -63,9 +65,14 @@ class ClaudeCodeBrain:
             "--effort", cfg.effort,
             "--system-prompt", persona,          # lean: replaces Claude Code's large default prompt
             "--tools", "WebSearch,WebFetch",     # built-in tools for the talker; the rest are jobs
+            "--permission-mode", cfg.cc_permission_mode,   # lets connector tools run (auto mode screens them)
             "--allowedTools", "mcp__jarvis", "WebSearch", "WebFetch",
-            "--strict-mcp-config", "--mcp-config", str(self.mcp_config),
+            "--mcp-config", str(self.mcp_config),
         ]
+        # Your claude.ai connectors (e.g. your own habit / budget apps) load automatically with a
+        # claude.ai login. JARVIS_CONNECTORS=0 limits Jarvis to its own tools.
+        if os.getenv("JARVIS_CONNECTORS", "1") == "0":
+            cmd.append("--strict-mcp-config")
         if resume:
             cmd += ["--resume", resume]
         return cmd
@@ -149,6 +156,10 @@ class ClaudeCodeBrain:
                 continue
 
             kind = event.get("type")
+            if kind == "system" and event.get("subtype") == "init":
+                self.connectors = [f"{m.get('name')} ({m.get('status')})" for m in event.get("mcp_servers", [])
+                                   if m.get("name") != "jarvis"]
+                print(f"[claude-code] MCP servers: {self.connectors or 'none besides jarvis'}")
             if kind == "assistant":
                 self._handle_assistant(event)
             elif kind == "result":

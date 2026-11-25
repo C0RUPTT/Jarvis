@@ -35,7 +35,7 @@ def _restart_soon(delay: float = 2.0) -> None:
     threading.Timer(delay, lambda: os._exit(0)).start()
 
 
-def status(config, jobs) -> str:
+def status(config, jobs, brain=None) -> str:
     lines = []
     try:
         import psutil
@@ -54,6 +54,10 @@ def status(config, jobs) -> str:
     if claude:
         _, out = _run([claude, "auth", "status"], timeout=30)
         lines.append("Claude login: " + ("OK" if '"loggedIn": true' in out else "NOT logged in. Ask me how to fix it"))
+    connectors = getattr(brain, "connectors", None)
+    if connectors is not None:
+        lines.append("Connected apps: " + (", ".join(connectors) if connectors else
+                                           "none yet (ask me anything once, then check again)"))
     if jobs is not None:
         active = [j for j in jobs.jobs.values() if j.status in {"running", "queued"}]
         lines.append(f"Jobs: {len(active)} active, {len(jobs.jobs)} total")
@@ -199,9 +203,9 @@ def set_timezone(arg: str = "") -> str:
     return f"Time zone set to {name} (it's {datetime.now():%I:%M %p} there). Restarting to apply it everywhere."
 
 
-def commands(config, jobs) -> dict:
+def commands(config, jobs, brain=None) -> dict:
     return {
-        "status": lambda: status(config, jobs),
+        "status": lambda: status(config, jobs, brain),
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,

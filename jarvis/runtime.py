@@ -145,7 +145,7 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
         from . import admin
 
         bot.commands = {
-            **admin.commands(config, jobs),
+            **admin.commands(config, jobs, brain),
             "jobs": lambda: jobs.summary() if jobs else "No background jobs in this mode.",
             "stats": lambda: metrics.report(config.data_dir),
             "reset": lambda: (brain.reset(), "New conversation started.")[1],

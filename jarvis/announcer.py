@@ -56,10 +56,33 @@ class Announcer:
         if self.speak and not silent:
             self.speak(text)
 
+    # -- phone actions ------------------------------------------------------------
+    # While a Siri request is being answered, actions are captured and returned to the Shortcut,
+    # which performs them on the phone itself. Otherwise they go out as Telegram links/messages.
+    _capture: list | None = None
+
+    def begin_capture(self) -> None:
+        self._capture = []
+
+    def end_capture(self) -> list[dict]:
+        captured, self._capture = self._capture or [], None
+        return captured
+
     def open_on_phone(self, url: str, label: str) -> None:
         """Ask the phone to open a link or app (maps, music, phone call, a Shortcut...)."""
+        if self._capture is not None:
+            self._capture.append({"type": "open", "url": url, "text": label})
+            return
         self._add({"type": "open", "url": url, "text": label})
         self.push(f"{label}\n{url}")
+
+    def phone_action(self, kind: str, fallback: str, **data) -> bool:
+        """A native phone action (timer, alarm). Returns False if no Siri request can take it,
+        in which case the caller should use its fallback."""
+        if self._capture is not None:
+            self._capture.append({"type": kind, **data})
+            return True
+        return False
 
     def push(self, text: str, silent: bool = False, title: str = "Jarvis") -> bool:
         """Send a notification to the phone. Returns False if no channel is set up."""
