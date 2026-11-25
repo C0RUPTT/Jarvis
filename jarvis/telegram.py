@@ -48,6 +48,13 @@ class TelegramBot:
                                    "disable_notification": str(silent).lower()},
                      "voice", "jarvis.mp3", mp3, "audio/mpeg")
 
+    def send_audio_file(self, mp3: bytes, filename: str, caption: str = "") -> None:
+        """An audio file (not a voice note), e.g. one to save as the chat's notification sound."""
+        fields = {"chat_id": str(self.user_id), "title": filename.rsplit(".", 1)[0]}
+        if caption:
+            fields["caption"] = caption
+        self._upload("sendAudio", fields, "audio", filename, mp3, "audio/mpeg")
+
     def typing(self) -> None:
         self._call("sendChatAction", {"chat_id": self.user_id, "action": "typing"})
 

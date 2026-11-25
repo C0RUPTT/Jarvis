@@ -7,6 +7,7 @@
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
     /city     your city for the morning weather, e.g. /city Dallas
+    /voicechime  a clip of Jarvis's voice to use as this chat's notification sound
     /backup   back up memory, reminders and projects to your private GitHub now (also nightly)
     /restore  bring a backup back onto a new server
     /notifysetup  how Claude Code tells Jarvis it's done; /notifycheck shows if that's working
@@ -272,6 +273,27 @@ def notify_check(config, rt=None) -> str:
     return "\n".join(lines)
 
 
+CHIME_TEXT = "Sir, I have an update for you."
+
+
+def voice_chime(config, bot) -> str:
+    """Send a short clip of Jarvis's voice, to be saved as the Jarvis chat's notification sound."""
+    from .voice.tts import synthesize_mp3
+
+    if bot is None:
+        return "Telegram isn't connected."
+    audio = synthesize_mp3(CHIME_TEXT, config.online_voice or "en-GB-RyanNeural")
+    if not audio:
+        return "I couldn't make the voice clip right now (the voice service didn't answer). Try again shortly."
+    if len(audio) > 300_000:
+        return "The clip came out too large for a Telegram notification sound."
+    bot.send_audio_file(audio, "Jarvis update.mp3",
+                        caption="Long-press this, tap 'Save for Notifications'. Then: chat name at the top "
+                                "> Notifications > Sound > Jarvis update.")
+    return ("Sent. To make it the Jarvis chat's sound: long-press the audio above > Save for Notifications, "
+            "then tap my name at the top > Notifications (or the bell) > Sound > choose 'Jarvis update'.")
+
+
 def set_env_value(key: str, value: str) -> None:
     env = ROOT / ".env"
     lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith(key + "=")]
@@ -295,6 +317,7 @@ def commands(config, jobs, brain=None) -> dict:
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
         "city": set_city,
+        "voicechime": lambda: voice_chime(config, getattr(brain, "_telegram", None)),
         "notifycheck": lambda: notify_check(config, getattr(brain, "_runtime", None)),
         "backup": lambda: __import__("jarvis.backup", fromlist=["x"]).backup_now(config),
         "restore": lambda: __import__("jarvis.backup", fromlist=["x"]).restore(config),
