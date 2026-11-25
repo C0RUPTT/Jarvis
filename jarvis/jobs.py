@@ -219,6 +219,14 @@ class JobRunner:
             job.cloud_url = ""
             return False
         self._note(job, f"Running in the cloud: {job.cloud_url}")
+        try:   # so "tell my <project> session ..." and list_claude_sessions know it right away
+            from . import claude_sessions
+
+            if not claude_sessions.name_of(self.state_file.parent, job.cloud_url):
+                claude_sessions.seen(self.state_file.parent, job.repo.split("/")[-1], job.cloud_url,
+                                     f"(Jarvis job #{job.id} started) {job.task[:200]}")
+        except Exception:  # noqa: BLE001
+            pass
         self._save()
         self.on_started_cloud(job)
         threading.Thread(target=self._watch_cloud, args=(job, path), daemon=True).start()

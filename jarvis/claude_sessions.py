@@ -29,13 +29,58 @@ def normalize(session: str) -> str:
     return session
 
 
+def is_side_run(label: str) -> bool:
+    """A helper Claude run inside a session (started from a temp or scratch folder, e.g. a test), not
+    the session's own reply: it carries the session's id but must not count as its answer."""
+    low = (label or "").lower()
+    return low.startswith(("tmp", "scratchpad")) or low in {"tmp", "temp", "scratch"}
+
+
+def trim(text: str, limit: int) -> str:
+    """Shorten at a sentence end where possible, never mid-word."""
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind(".\n"))
+    if end >= limit // 3:
+        return cut[:end + 1]
+    return cut.rsplit(" ", 1)[0] + "…"
+
+
+def name_of(data_dir: Path, sid: str) -> str:
+    return next((s["project"] for s in load(data_dir) if s["id"] == normalize(sid)), "")
+
+
 def seen(data_dir: Path, label: str, session: str, summary: str) -> None:
     if not session:
         return
     sid = normalize(session)
+    old = next((s for s in load(data_dir) if s["id"] == sid), None)
+    if is_side_run(label):
+        if old is None:
+            return
+        label, summary = old["project"], old.get("last_summary", "")   # keep its real name and reply
+    elif old and old.get("named"):
+        label = old["project"]          # a name the user gave it ("Jarvis") wins over the folder name
     items = [s for s in load(data_dir) if s["id"] != sid]
-    items.insert(0, {"id": sid, "project": label, "last_seen": time.time(), "last_summary": summary[:300]})
+    entry = {"id": sid, "project": label, "last_seen": time.time(), "last_summary": summary[:1500]}
+    if old and old.get("named"):
+        entry["named"] = True
+    items.insert(0, entry)
     _file(data_dir).write_text(json.dumps(items[:30], indent=1))
+
+
+def register(data_dir: Path, project: str, session: str) -> str:
+    """Remember a session under the name the user calls it. Returns its id."""
+    sid = normalize(session)
+    old = next((s for s in load(data_dir) if s["id"] == sid), {})
+    items = [s for s in load(data_dir) if s["id"] != sid]
+    items.insert(0, {"id": sid, "project": project.strip(), "named": True, "last_seen": time.time(),
+                     "last_summary": old.get("last_summary", "")})
+    data_dir.mkdir(parents=True, exist_ok=True)
+    _file(data_dir).write_text(json.dumps(items[:30], indent=1))
+    return sid
 
 
 def send(session: str, message: str) -> str:

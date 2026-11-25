@@ -15,15 +15,28 @@ from . import tool
 def list_claude_sessions(ctx):
     from .. import claude_sessions
 
+    def ago(t: float) -> str:
+        mins = int((time.time() - t) // 60)
+        return f"{mins} min ago" if mins < 120 else f"{mins // 60} h ago"
+
     items = claude_sessions.load(ctx.config.data_dir)
-    if not items:
-        return ("No sessions known yet. Sessions appear here after they finish a task (via the done "
-                "hook); the user can also give a claude.ai/code session link.")
+    rt = ctx.extras.get("runtime")
+    waiting = rt.awaiting if rt is not None else set()
     lines = []
     for s in items[:10]:
-        mins = int((time.time() - s["last_seen"]) // 60)
-        ago = f"{mins} min ago" if mins < 120 else f"{mins // 60} h ago"
-        lines.append(f"- {s['project'] or '?'} ({ago}), id {s['id']}: {s['last_summary'][:120]}")
+        status = " [waiting for its reply]" if s["id"] in waiting else ""
+        said = claude_sessions.trim(s.get("last_summary", ""), 400) or "(nothing yet)"
+        lines.append(f"- {s['project'] or '?'} ({ago(s['last_seen'])}), id {s['id']}{status}. Last said: {said}")
+    # Background jobs Jarvis started are sessions too.
+    jobs = ctx.extras.get("jobs")
+    for job in sorted(getattr(jobs, "jobs", {}).values(), key=lambda j: -j.id)[:6] if jobs else []:
+        where = f", watch: {job.cloud_url}" if getattr(job, "cloud_url", "") else ""
+        what = claude_sessions.trim(job.task, 100)
+        lines.append(f"- Jarvis job #{job.id} ({job.status}{where}): {what}. To continue it, use "
+                     f"start_job with follow_up_of={job.id}.")
+    if not lines:
+        return ("No sessions known yet. A session appears here once it finishes a turn (via the done "
+                "hook), or when the user gives its claude.ai/code link (register_claude_session).")
     return "\n".join(lines)
 
 
@@ -71,5 +84,5 @@ def register_claude_session(ctx, link: str, project: str):
     sid = claude_sessions.normalize(link)
     if not sid.startswith("session_"):
         return "That doesn't look like a Claude Code session link (claude.ai/code/session_...)."
-    claude_sessions.seen(ctx.config.data_dir, project, sid, "(registered by link)")
-    return f"Saved: '{project}' is {sid}."
+    claude_sessions.register(ctx.config.data_dir, project, sid)
+    return f"Saved: '{project}' is {sid}. It's in list_claude_sessions now."

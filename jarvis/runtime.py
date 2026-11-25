@@ -40,16 +40,41 @@ class Runtime:
         self.recent = []
         self._awaiting_since: dict = {}
 
+    # Sessions we sent a message to. Kept on disk, so a restart (every update restarts Jarvis) doesn't
+    # forget them, and kept for hours: a session busy with a long task replies only when it's done.
+    AWAIT_HOURS = 6
+
+    def _awaiting_file(self) -> Path:
+        return self.config.data_dir / "awaiting.json"
+
+    def _load_awaiting(self) -> None:
+        import json
+
+        try:
+            saved = json.loads(self._awaiting_file().read_text())
+        except (OSError, ValueError):
+            saved = {}
+        cutoff = time.time() - self.AWAIT_HOURS * 3600
+        self._awaiting_since = {k: v for k, v in saved.items() if v > cutoff}
+        self.awaiting = set(self._awaiting_since)
+
+    def _save_awaiting(self) -> None:
+        import json
+
+        try:
+            self._awaiting_file().write_text(json.dumps(self._awaiting_since))
+        except OSError:
+            pass
+
     def await_reply(self, session_id: str) -> None:
         self.awaiting.add(session_id)
         self._awaiting_since[session_id] = time.time()
+        self._save_awaiting()
 
     def active_awaiting(self) -> set:
-        """Sessions we're still waiting on (forget ones that haven't replied in 10 minutes)."""
-        for sid in list(self.awaiting):
-            if time.time() - self._awaiting_since.get(sid, 0) > 600:
-                self.awaiting.discard(sid)
-        return self.awaiting
+        """Sessions sent a message in the last 10 minutes: Siri keeps waiting for these. (Replies
+        that come later are still delivered; see claude_code_finished.)"""
+        return {sid for sid in self.awaiting if time.time() - self._awaiting_since.get(sid, 0) <= 600}
 
     def deliver(self, text: str, urgent: bool = True) -> None:
         """Tell the user something now. If a Siri conversation is going on, it's spoken there on the
@@ -80,10 +105,16 @@ class Runtime:
 
         claude_sessions.seen(self.config.data_dir, label, session, summary)
         sid = claude_sessions.normalize(session) if session else ""
-        if sid and sid in self.awaiting:
+        if sid and claude_sessions.is_side_run(label):
+            return "ignored (a helper run inside that session, not its reply)"
+        if sid and sid in self.awaiting and \
+                time.time() - self._awaiting_since.get(sid, 0) < self.AWAIT_HOURS * 3600:
             # A reply to something the user sent through Jarvis: always read it out, however quick.
             self.awaiting.discard(sid)
-            self.deliver(f"Your {label or 'Claude Code'} session says: {summary[:600] or 'done.'}")
+            self._awaiting_since.pop(sid, None)
+            self._save_awaiting()
+            name = claude_sessions.name_of(self.config.data_dir, sid) or label or "Claude Code"
+            self.deliver(f"Your {name} session says: {claude_sessions.trim(summary, 600) or 'done.'}")
             return "delivered reply"
         if self.claude_watch == "off":
             return "ignored (announcements off)"
@@ -93,7 +124,7 @@ class Runtime:
         where = f" on {label}" if label else ""
         text = f"Claude Code is done{where}."
         if summary:
-            text += f" {summary[:400]}"
+            text += f" {claude_sessions.trim(summary, 400)}"
         # Announcements you asked for always get through, with sound.
         self.deliver(text, urgent=True)
         if self.claude_watch == "once":
@@ -316,10 +347,11 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
     backup.start_nightly(config, announcer.announce)
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
+    rt._load_awaiting()
     if os.getenv("JARVIS_NOTIFY_LISTENER", "1") != "0":
         from . import notify_listener
 
-        notify_listener.start(config.notify_topic, rt.claude_code_finished)
+        notify_listener.start(config.notify_topic, rt.claude_code_finished, config.data_dir)
     rt.claude_watch = rt._watch_default()
     ctx.extras["runtime"] = rt
     brain._runtime = rt   # lets /notifycheck show the announcement mode

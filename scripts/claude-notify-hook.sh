@@ -20,6 +20,11 @@ except Exception:
     event = {}
 if event.get("stop_hook_active"):
     sys.exit(0)
+# A helper `claude` run started inside a session (e.g. a test in a temp folder) inherits the
+# session's id; its "done" is not the session's reply, so don't report it.
+project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+if project_dir.startswith(("/tmp/", "/var/tmp/")):
+    sys.exit(0)
 
 
 def worked_seconds(transcript: str) -> int:
@@ -45,8 +50,8 @@ def worked_seconds(transcript: str) -> int:
 
 
 body = json.dumps({
-    "label": os.path.basename(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()),
-    "summary": (event.get("last_assistant_message") or "")[:500],
+    "label": os.path.basename(project_dir),
+    "summary": (event.get("last_assistant_message") or "")[:1500],
     "seconds": worked_seconds(event.get("transcript_path") or ""),
     "session": os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or "",   # cloud sessions only
 }).encode()
