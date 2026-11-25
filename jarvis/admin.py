@@ -187,30 +187,24 @@ def public_host() -> str:
     return ""
 
 
-def shortcut(config) -> str:
-    """Ready-to-paste links (token included) for the Siri Shortcut and the alarm automation."""
-    import json
-
-    host = "<your-server>.ts.net"
-    tailscale = shutil.which("tailscale")
-    if tailscale:
-        code, out = _run([tailscale, "status", "--json"], timeout=15)
-        try:
-            host = json.loads(out)["Self"]["DNSName"].rstrip(".")
-        except (ValueError, KeyError):
-            pass
+def shortcut(config, telegram=None) -> str:
+    """The Siri Shortcut's links, token included. Each link is sent as its own message, so a long
+    press, Copy gives exactly the link."""
+    host = public_host() or "<your-server>.ts.net"
     base = f"https://{host}"
-    return (
-        "Siri Shortcut (3 actions):\n"
-        "1. Dictate Text\n"
-        "2. Get Contents of URL - paste the link below, Method POST, Request Body JSON, "
-        "add a Text field: key  text  value  Dictated Text\n"
-        "3. Speak Text - Contents of URL\n\n"
-        f"{base}/api/ask?format=text&token={config.token}\n\n"
-        "Alarm automation (Alarm > Is Stopped > Run Immediately): Get Contents of URL, Method POST, "
-        "then Speak Text:\n\n"
-        f"{base}/api/wake?token={config.token}"
-    )
+    links = [
+        ("Main request (Get Contents of URL, Method POST, Request Body JSON, field text = Provided Input):",
+         f"{base}/api/ask?format=siri&token={config.token}"),
+        ("Waiting step (Get Contents of URL inside the waiting loop, Method POST):",
+         f"{base}/api/wait?token={config.token}"),
+        ("Wake-up automation (optional):", f"{base}/api/wake?token={config.token}"),
+    ]
+    if telegram is None:
+        return "\n\n".join(f"{label}\n{url}" for label, url in links)
+    for label, url in links:
+        telegram.send(label)
+        telegram.send(url)
+    return "Those are your Shortcut links: long-press a link message, then Copy."
 
 
 US_ZONES = {"eastern": "America/New_York", "central": "America/Chicago", "mountain": "America/Denver",
@@ -316,7 +310,7 @@ def commands(config, jobs, brain=None) -> dict:
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
         "stats": lambda: __import__("jarvis.metrics", fromlist=["x"]).report(config.data_dir),
-        "shortcut": lambda: shortcut(config),
+        "shortcut": lambda: shortcut(config, getattr(brain, "_telegram", None)),
         "timezone": set_timezone,
         "city": set_city,
         "voicechime": lambda: voice_chime(config, getattr(brain, "_telegram", None)),
