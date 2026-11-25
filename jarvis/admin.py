@@ -1,6 +1,7 @@
 """Server admin from Telegram, so you never need the terminal:
 
     /status   health: memory, disk, uptime, Claude login, jobs, version
+    /groq     fast speech recognition for voice (free key from console.groq.com)
     /stats    how fast Jarvis answers (Siri, web app, Telegram) and Claude usage
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
@@ -328,6 +329,9 @@ def commands(config, jobs, brain=None) -> dict:
         "backup": lambda: __import__("jarvis.backup", fromlist=["x"]).backup_now(config),
         "restore": lambda: __import__("jarvis.backup", fromlist=["x"]).restore(config),
         "notifysetup": lambda: notify_setup(config),
+        "groq": lambda arg="": __import__("jarvis.stt_cloud", fromlist=["x"]).save_key(arg) if arg else (
+            "Fast speech recognition (free): sign up at console.groq.com, then API Keys > Create, and "
+            "send it here like this: /groq gsk_..."),
         "github": lambda arg="": __import__("jarvis.github", fromlist=["x"]).save_token(arg, ROOT / ".env")
                   if arg else "Send it like this: /github github_pat_... (see docs/GITHUB.md for how to make one).",
         "textsetup": lambda arg="": __import__("jarvis.sms", fromlist=["x"]).setup(arg, ROOT / ".env"),

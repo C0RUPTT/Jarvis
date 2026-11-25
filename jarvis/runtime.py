@@ -153,6 +153,13 @@ class Runtime:
             (self.config.data_dir / "claude-watch").write_text(mode)
 
     def transcribe(self, audio) -> str:
+        from . import stt_cloud
+
+        if stt_cloud.enabled() and isinstance(audio, (str, Path)):
+            try:
+                return stt_cloud.transcribe(str(audio))
+            except Exception as e:  # noqa: BLE001 - any problem: use the server's own Whisper
+                print(f"[voice] fast recognition unavailable ({e}); using the server's own")
         if self._whisper is None:
             from .voice.listener import Transcriber
 
