@@ -8,6 +8,8 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import hmac
+import re
+import threading
 import tempfile
 import time
 from pathlib import Path
@@ -17,7 +19,10 @@ from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
 
 WEB_DIR = Path(__file__).parent / "web"
-STILL_WORKING = "Still working on that. I'll message you the answer as soon as it's ready."
+STILL_WORKING = "Still working on that. Ask me \"is it ready?\" in a moment, or I'll message you the answer."
+HANDOFF_GRACE = 20  # seconds a finished late answer waits for your next Siri turn before it's sent to Telegram
+READY_CHECK = re.compile(r"^(is it |are you )?(ready|done|finished)( yet)?\??$|^(go on|and\??|well\??|still there\??|"
+                         r"what did you find\??|any luck\??)$", re.I)
 
 
 def create_app(config: Config, speak_on_laptop: bool = False):
@@ -50,20 +55,59 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             "audio": base64.b64encode(audio).decode() if audio else None,
         }
 
+    pending: list[dict] = []          # late Siri answers: {"q", "future", "done_at", "delivered"}
+    pending_lock = threading.Lock()
+
+    def _late_text(item: dict) -> str:
+        try:
+            return f"About your earlier question, \"{item['q'][:60]}\": {item['future'].result()}"
+        except Exception as e:  # noqa: BLE001
+            return f"Sorry, your earlier question \"{item['q'][:60]}\" failed: {e}"
+
+    def _take_finished() -> list[str]:
+        """Late answers that are ready and not yet delivered, so they can be spoken in this turn."""
+        with pending_lock:
+            ready = [p for p in pending if p["future"].done() and not p["delivered"]]
+            for p in ready:
+                p["delivered"] = True
+            pending[:] = [p for p in pending if not p["delivered"]]
+        return [_late_text(p) for p in ready]
+
+    def _notify_if_unclaimed(item: dict) -> None:
+        """The conversation may have ended: if nobody picked the answer up in time, send it to Telegram."""
+        def later():
+            with pending_lock:
+                if item["delivered"]:
+                    return
+                item["delivered"] = True
+                pending[:] = [p for p in pending if p is not item]
+            announcer.announce(_late_text(item), reply=True)
+        threading.Timer(HANDOFF_GRACE, later).start()
+
     def ask_within_budget(text: str) -> str:
-        """Siri gives up on slow requests, so answer within the budget no matter what.
-        A late reply is delivered by notification instead of being lost."""
+        """Siri gives up on slow requests, so always answer within the budget. A late answer is spoken
+        at the start of your next Siri turn, or sent to Telegram if the conversation has ended."""
+        earlier = _take_finished()
+        if READY_CHECK.match(text.strip(" .!")):
+            with pending_lock:
+                waiting = [p for p in pending if not p["delivered"]]
+            if waiting and not earlier:   # wait (within budget) for the oldest unfinished answer
+                concurrent.futures.wait([waiting[0]["future"]], timeout=config.siri_budget)
+                earlier = _take_finished()
+            if earlier:
+                return " ".join(earlier)
+            return "Still on it. Give me another moment." if waiting else "Nothing pending; ask away."
+
         future = pool.submit(rt.ask, text)
         try:
-            return future.result(timeout=config.siri_budget)
+            reply = future.result(timeout=config.siri_budget)
         except concurrent.futures.TimeoutError:
-            def deliver_late(f):
-                try:
-                    announcer.announce(f"About \"{text[:80]}\": {f.result()}", reply=True)
-                except Exception as e:  # noqa: BLE001
-                    announcer.announce(f"Sorry, \"{text[:80]}\" failed: {e}", reply=True)
-            future.add_done_callback(deliver_late)
-            return STILL_WORKING
+            item = {"q": text, "future": future, "delivered": False}
+            with pending_lock:
+                pending.append(item)
+            future.add_done_callback(lambda f: _notify_if_unclaimed(item))
+            reply = STILL_WORKING
+        return " ".join(earlier + [reply])
 
     @app.get("/")
     def index():
