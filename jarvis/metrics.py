@@ -45,7 +45,7 @@ def report(data_dir: Path, days: float = 3) -> str:
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     rows = [r for r in rows if r["t"] >= since]
     lines = [f"Last {days:g} days:"]
-    for kind in ("siri", "fast", "turn", "telegram", "job"):
+    for kind in ("siri", "web", "fast", "turn", "telegram", "job"):
         group = [r for r in rows if r["kind"] == kind]
         if not group:
             continue
@@ -57,4 +57,8 @@ def report(data_dir: Path, days: float = 3) -> str:
             f"new tokens {fresh:,}  cached {sum(r['cache_read'] for r in group):,}  "
             f"output {sum(r['tokens_out'] for r in group):,}"
         )
+    web = [r for r in rows if r["kind"] == "web" and "stt" in r]
+    if web:
+        lines.append(f"  web app: hearing you {statistics.median(r['stt'] for r in web):.1f}s, "
+                     f"thinking {statistics.median(r['think'] for r in web):.1f}s (medians)")
     return "\n".join(lines)

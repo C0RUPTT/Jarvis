@@ -244,7 +244,12 @@
 
   function speak(data) {
     return new Promise((resolve) => {
-      if (data.audio) {
+      if (data.audio_url) {   // streamed: starts playing as soon as the first words are ready
+        player.src = data.audio_url + "?token=" + encodeURIComponent(token);
+        player.onended = resolve;
+        player.onerror = () => speakLocally(data.speech, resolve);
+        player.play().catch(() => speakLocally(data.speech, resolve));
+      } else if (data.audio) {
         player.src = "data:audio/mpeg;base64," + data.audio;
         player.onended = player.onerror = resolve;
         player.play().catch(() => speakLocally(data.speech, resolve));
@@ -309,7 +314,7 @@
       const threshold = Math.max(noiseFloor * 3, 0.02);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold) { lastLoud = now; if (!speechStart) speechStart = now; }
-      if (speechStart && now - lastLoud > 2000) {                // a 2-second pause: they've finished
+      if (speechStart && now - lastLoud > 1500) {                // a 1.5-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
@@ -337,7 +342,7 @@
           if (/Unknown or expired|404/.test(e.message)) { savePending(null); return null; }
         }
       }
-      await sleep(1000);
+      await sleep(i < 120 ? 300 : 1500);   // check often at first, so a quick answer isn't kept waiting
     }
     return null;
   }
@@ -368,6 +373,20 @@
       for (const t of turns.slice(-4)) { add("you", t.you); add("jarvis", t.jarvis); }
     } catch {}
   })();
+  // Came back to the home-screen app after talking to Siri: show what was said meanwhile.
+  let shownUpTo = Date.now() / 1000;
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible" || !token) return;
+    try {
+      const { turns } = await api("/api/recent");
+      const fresh = (turns || []).filter(t => t.time > shownUpTo);
+      if (fresh.length) {
+        add("sys", "Meanwhile, with Siri:");
+        for (const t of fresh.slice(-4)) { add("you", t.you); add("jarvis", t.jarvis); }
+      }
+    } catch {}
+    shownUpTo = Date.now() / 1000;
+  });
   // Siri handed over: one tap starts hands-free talking (iPhone needs a tap before it lets a page
   // use the speaker), so cover the screen with a big tap target.
   if (handoff && token) {
