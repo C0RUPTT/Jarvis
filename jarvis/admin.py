@@ -7,6 +7,7 @@
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
     /notifysetup  public link so Claude Code can tell Jarvis when it's done
+    /github <key> connect your GitHub so Jarvis can work on your projects
     /help     list of commands
 """
 
@@ -247,5 +248,7 @@ def commands(config, jobs, brain=None) -> dict:
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
         "notifysetup": lambda: notify_setup(config),
+        "github": lambda arg="": __import__("jarvis.github", fromlist=["x"]).save_token(arg, ROOT / ".env")
+                  if arg else "Send it like this: /github github_pat_... (see docs/GITHUB.md for how to make one).",
         "help": lambda: __doc__.strip(),
     }

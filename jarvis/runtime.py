@@ -123,6 +123,9 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
           confirm: Callable[[str], bool] | None = None,
           telegram: bool = True) -> Runtime:
     metrics.init(config.data_dir)
+    from . import github
+
+    github.configure_git()   # no-op unless JARVIS_GITHUB_TOKEN is set
     announcer = Announcer(config.ntfy_topic, speak=speak, state_file=config.data_dir / "delivery.json",
                           quiet_start=config.quiet_start)
     ctx = Context(

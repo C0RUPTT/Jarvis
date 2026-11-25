@@ -31,6 +31,7 @@ class TelegramBot:
         self.transcribe: Callable[[str], str] | None = None    # audio file path -> text
         self.synthesize: Callable[[str], bytes | None] | None = None  # text -> mp3 bytes
         self.commands: dict[str, Callable[[], str]] = {}
+        self.secret_commands: set[str] = {"github"}
 
     # -- sending ---------------------------------------------------------------
 
@@ -101,6 +102,9 @@ class TelegramBot:
         command = text.split()[0].lower().lstrip("/") if text.startswith("/") else ""
         if command in self.commands:
             arg = text.split(maxsplit=1)[1].strip() if " " in text else ""
+            if command in self.secret_commands and msg.get("message_id"):
+                # Don't leave keys sitting in the chat history.
+                self._call("deleteMessage", {"chat_id": self.user_id, "message_id": msg["message_id"]})
             func = self.commands[command]
             try:
                 self.send(func(arg))

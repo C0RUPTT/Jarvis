@@ -21,6 +21,12 @@ for this by voice and is not watching you work, so work autonomously and make se
 yourself. Unless told otherwise, put each new project in its own folder inside the current \
 directory, use git, and commit your work as you go. Test what you build before finishing.
 
+Existing GitHub projects: if the brief names a GitHub repository (owner/name), work in a folder \
+of that name inside the current directory: clone it with git if it isn't there yet, otherwise pull \
+the latest. GitHub access is already configured for git (and the gh CLI if installed). Commit your \
+changes and push them to a new branch named jarvis/<short-topic>, unless the brief says to push to \
+the main branch. Say which branch you pushed in your summary.
+
 When you are done, end with a short summary written to be read aloud: two or three plain \
 sentences, no markdown, saying what you did, where it is, and how to try it."""
 
