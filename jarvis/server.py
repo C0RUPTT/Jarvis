@@ -26,6 +26,13 @@ from .voice.tts import clean_for_speech, synthesize_mp3
 WEB_DIR = Path(__file__).parent / "web"
 STILL_WORKING = "Still working on that. Ask me \"is it ready?\" in a moment, or I'll message you the answer."
 HANDOFF_GRACE = 20  # seconds a finished late answer waits for your next Siri turn before it's sent to Telegram
+# Ways people end a Siri conversation, including how dictation mishears "bye" ("by", "buy").
+GOODBYE = re.compile(
+    r"^(ok(ay)?|alright|all right|thanks?( you)?|cool|great|perfect|no)?[,.! ]*"
+    r"(bye|bye[- ]bye|by|buy|good ?-?bye|see (ya|you)( later)?|later|that'?s (all|it)|that will be all|"
+    r"i'?m (good|all set|set)|nothing( else)?|no thanks?|nope|stop|end|exit|quit|cancel|dismissed|over and out)"
+    r"( for now| jarvis| thanks?| thank you)*[.!?]*$", re.I)
+FAREWELLS = ["Goodbye, sir.", "Very good, sir.", "I'll be here.", "Until next time, sir.", "Right you are, sir."]
 READY_CHECK = re.compile(r"^(is it |are you )?(ready|done|finished)( yet)?\??$|^(go on|and\??|well\??|still there\??|"
                          r"what did you find\??|any luck\??)$", re.I)
 
@@ -225,6 +232,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 return PlainTextResponse(nothing)
             raise HTTPException(status_code=400, detail="No text")
         print(f"\nYou: {text}")
+        if format == "siri" and rt.dictation is None and GOODBYE.match(text.strip()):
+            # Tell the Shortcut to end the conversation (its own "bye" check misses "by", "that's all"...).
+            return {"say": FAREWELLS[int(time.time()) % len(FAREWELLS)], "stop": "yes"}
         if format == "siri":
             # For the Siri Shortcut: what to say, plus phone actions for the Shortcut to perform.
             started = time.monotonic()

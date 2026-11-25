@@ -193,7 +193,7 @@
   function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
   function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
 
-  const GOODBYE = /^(ok(ay)?,? )?(goodbye|bye|that('?s| is| will be) all|stop listening|thanks,? that'?s it)\b/i;
+  const GOODBYE = /^(ok(ay)?|alright|thanks?( you)?|cool|no)?[,.! ]*(bye|bye[- ]bye|by|buy|good ?-?bye|see (ya|you)( later)?|that'?s (all|it)|that will be all|i'?m (good|all set)|nothing( else)?|no thanks?|stop listening|dismissed)( for now| jarvis| thanks?| thank you)*[.!?]*$/i;
   let state = "idle";          // idle | listening | thinking | speaking
   let conversation = false;    // hands-free mode on?
   let lastEventId = 0, wakeLock = null;
