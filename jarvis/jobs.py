@@ -45,6 +45,10 @@ class Job:
     quiet: bool = False             # deliver silently
     activity: list = field(default_factory=list)   # live log of what the worker is doing (dashboard)
     preview: str = ""                               # path of a web page it built, under /preview/
+    repo: str = ""                                  # GitHub "owner/name" this job works on
+    cloud_url: str = ""                             # Claude Code cloud session, if it runs there
+    branch: str = ""                                # branch the cloud session finished on
+    path: str = ""                                  # local folder of the repo, if any
 
     def describe(self) -> str:
         age = int(time.time() - (self.started or self.created))
@@ -65,6 +69,7 @@ class JobRunner:
         self.model = model
         self.permission_mode = permission_mode
         self.on_finished = on_finished
+        self.on_started_cloud: Callable[[Job], None] = lambda job: None
         self.state_file = data_dir / "jobs.json"
         self.jobs: dict[int, Job] = self._load()
         self._ids = itertools.count(max(self.jobs, default=0) + 1)
@@ -78,9 +83,11 @@ class JobRunner:
 
     # -- public API (used by tools) -------------------------------------------
 
-    def submit(self, task: str, continues: int | None = None, quiet: bool = False) -> Job:
+    def submit(self, task: str, continues: int | None = None, quiet: bool = False, repo: str = "") -> Job:
         with self._lock:
-            job = Job(id=next(self._ids), task=task, continues=continues, quiet=quiet)
+            previous = self.jobs.get(continues) if continues else None
+            repo = repo or (previous.repo if previous else "")
+            job = Job(id=next(self._ids), task=task, continues=continues, quiet=quiet, repo=repo)
             self.jobs[job.id] = job
             self._save()
         self._wake.set()
@@ -121,6 +128,16 @@ class JobRunner:
         with self._lock:
             job.status, job.started = "running", time.time()
             self._save()
+        if job.repo:
+            from . import cloud
+
+            if cloud.enabled() and self._run_cloud(job):
+                return          # running in the cloud; a watcher thread finishes the job
+            if not job.path:    # cloud disabled: still work inside a local clone of the repo
+                job.path = cloud.prepare_repo(job.repo, self.workdir)[0]
+            self._note(job, f"Working on {job.repo} on this server" + (f" in {job.path}." if job.path else "."))
+            job.task += (f"\n\n(The project is the GitHub repository {job.repo}"
+                         + (", already cloned in the current directory" if job.path else "") + ".)")
 
         cmd = [
             self.claude or "claude", "-p", job.task,
@@ -136,7 +153,7 @@ class JobRunner:
         output, result_event = "", None
         try:
             self._current = subprocess.Popen(
-                cmd, cwd=self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                cmd, cwd=job.path or self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             )
             killer = threading.Timer(3 * 3600, self._current.kill)
@@ -175,6 +192,69 @@ class JobRunner:
         metrics.record("job", seconds=job.finished - job.started, usage=result.get("usage"),
                        ok=job.status == "done", job_id=job.id)
         self.on_finished(job)
+
+    def _note(self, job: Job, line: str) -> None:
+        with self._lock:
+            job.activity = (job.activity + [f"{time.strftime('%H:%M:%S')}  {line}"])[-40:]
+            self._save()
+
+    def _run_cloud(self, job: Job) -> bool:
+        """Start (or continue) the job as a Claude Code cloud session. False = use the local fallback."""
+        from . import cloud
+
+        path, error = cloud.prepare_repo(job.repo, self.workdir)
+        job.path = path
+        if error:
+            self._note(job, f"Couldn't download {job.repo} ({error}); running locally.")
+            return False
+        previous = self.jobs.get(job.continues) if job.continues else None
+        if previous and previous.cloud_url:
+            error = cloud.follow_up(previous.cloud_url, job.task, job.id, path)
+            job.cloud_url = previous.cloud_url
+        else:
+            self._note(job, "Starting a Claude Code cloud session...")
+            job.cloud_url, error = cloud.launch(job.task, job.id, path)
+        if error or not job.cloud_url:
+            self._note(job, f"Cloud session unavailable ({error or 'no session link'}); running on this server instead.")
+            job.cloud_url = ""
+            return False
+        self._note(job, f"Running in the cloud: {job.cloud_url}")
+        self._save()
+        self.on_started_cloud(job)
+        threading.Thread(target=self._watch_cloud, args=(job, path), daemon=True).start()
+        return True
+
+    def _watch_cloud(self, job: Job, path: str) -> None:
+        """Poll GitHub for the session's 'jarvis-done' commit, then finish the job."""
+        from . import cloud
+
+        deadline, nudged = time.time() + 6 * 3600, False
+        while time.time() < deadline and job.status == "running":
+            time.sleep(60)
+            try:
+                found = cloud.find_done(job.repo, job.id)
+            except Exception as e:  # noqa: BLE001 - GitHub hiccup; keep watching
+                self._note(job, f"(couldn't check GitHub: {e})")
+                continue
+            if found:
+                job.branch, summary = found
+                cloud.checkout_branch(path, job.branch)
+                with self._lock:
+                    job.status, job.finished = "done", time.time()
+                    job.result = f"{summary} (Branch: {job.branch})"
+                    job.preview = find_preview(self.workdir, since=job.started or 0)
+                    self._save()
+                self.on_finished(job)
+                return
+            if not nudged and time.time() - (job.started or time.time()) > 45 * 60:
+                nudged = True
+                self._note(job, "No finish signal after 45 minutes; check the session in the Claude app.")
+        if job.status == "running":
+            with self._lock:
+                job.status, job.finished = "failed", time.time()
+                job.result = f"The cloud session didn't report back. See it in the Claude app: {job.cloud_url}"
+                self._save()
+            self.on_finished(job)
 
     def _note_activity(self, job: Job, event: dict) -> None:
         """Turn a worker message into short human-readable activity lines for the dashboard."""

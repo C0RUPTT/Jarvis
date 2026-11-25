@@ -86,6 +86,7 @@
   .inline input, .card textarea { flex: 1; min-width: 0; background: var(--bg); color: var(--text);
     border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 16px; }
   .card textarea { width: 100%; min-height: 64px; resize: vertical; }
+  a.small { display: inline-block; text-decoration: none; margin: 4px 0; }
   a.primary { display: inline-block; text-decoration: none; margin: 4px 0; }
   .primary { background: var(--accent); color: #00141d; border: none; border-radius: 999px;
     padding: 8px 16px; font-weight: 600; font-size: 14px; }
@@ -448,6 +449,7 @@
         <div class="task"></div><details class="act"><summary>Live activity</summary><pre class="mono"></pre></details>
         <div class="result"></div>
         <a class="primary preview" target="_blank" rel="noopener" hidden>Open preview ↗</a>
+        <a class="small cloud" target="_blank" rel="noopener" hidden>Watch in Claude app ↗</a>
         <div class="inline follow"><input placeholder="Follow-up: e.g. make the buttons bigger"><button class="small" type="button">Send</button></div>
         <div class="row"><button class="small cancel" type="button">Cancel</button></div>`;
       const input = box.querySelector(".follow input");
@@ -476,6 +478,8 @@
     box.querySelector(".result").textContent = j.result || "";
     const pv = box.querySelector(".preview");
     pv.hidden = !j.preview; if (j.preview) pv.href = j.preview;
+    const cl = box.querySelector(".cloud");
+    cl.hidden = !j.cloud_url; if (j.cloud_url) cl.href = j.cloud_url;
     box.querySelector(".follow").hidden = active || !["done", "failed"].includes(j.status);
     box.querySelector(".cancel").parentElement.hidden = !active;
     return box;

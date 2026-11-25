@@ -23,12 +23,13 @@ def _runner(ctx):
     {
         "task": {"type": "string", "description": "Complete instructions for the worker"},
         "follow_up_of": {"type": "integer", "description": "Job number this continues, e.g. changes to an app it built"},
+        "repo": {"type": "string", "description": "GitHub repository 'owner/name' when working on an existing project (from list_projects). These run as Claude Code cloud sessions the user can watch in the Claude app"},
         "quiet": {"type": "boolean", "description": "Deliver the result silently (user asked not to be disturbed)"},
     },
     ["task"],
 )
-def start_job(ctx, task: str, follow_up_of: int | None = None, quiet: bool = False):
-    job = _runner(ctx).submit(task, continues=follow_up_of, quiet=quiet)
+def start_job(ctx, task: str, follow_up_of: int | None = None, quiet: bool = False, repo: str = ""):
+    job = _runner(ctx).submit(task, continues=follow_up_of, quiet=quiet, repo=repo.strip())
     ahead = sum(1 for j in _runner(ctx).jobs.values() if j.status in {"queued", "running"} and j.id != job.id)
     return f"Job #{job.id} started" + (f" ({ahead} job(s) ahead of it in the queue)." if ahead else ".")
 

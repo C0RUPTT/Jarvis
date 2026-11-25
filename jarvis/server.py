@@ -249,6 +249,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             "id": j.id, "task": j.task, "status": j.status, "result": j.result,
             "continues": j.continues, "activity": j.activity[-15:],
             "preview": f"/preview/{j.preview}" if getattr(j, "preview", "") else "",
+            "cloud_url": getattr(j, "cloud_url", ""), "branch": getattr(j, "branch", ""),
             "seconds": int((j.finished or now) - (j.started or j.created)) if j.started else 0,
             "created": j.created,
         }

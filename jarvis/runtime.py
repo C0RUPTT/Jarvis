@@ -235,6 +235,9 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
 
         jobs = JobRunner(config.data_dir, config.projects_dir, config.worker_model,
                          config.cc_permission_mode, on_finished=job_finished)
+        jobs.on_started_cloud = lambda job: announcer.announce(
+            f"Job {job.id} is running as a Claude Code cloud session. Watch or steer it in the Claude "
+            f"app: {job.cloud_url}", quiet=True)
         ctx.extras["jobs"] = jobs
 
     from .tools import reminders, watchers
