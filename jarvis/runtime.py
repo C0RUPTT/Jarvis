@@ -4,6 +4,7 @@ Shared by every mode (phone server, terminal, laptop voice)."""
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +28,7 @@ class Runtime:
     telegram: object | None
     _whisper: object | None = None
     claude_watch: str = "off"      # "off" | "once" | "always": announce when Claude Code finishes
+    dictation: list | None = None  # long-message mode: pieces collected until the user says "done"
 
     def claude_code_finished(self, label: str = "", summary: str = "") -> str:
         """Called by the Claude Code hook (POST /api/notify) when a Claude Code session finishes a task."""
@@ -53,6 +55,12 @@ class Runtime:
         """Everything the user says goes through here: fast path first, then Claude."""
         from . import fastpath
 
+        long_reply = self._long_message(text)
+        if long_reply is not None:
+            if not long_reply.startswith("\x00"):
+                return long_reply
+            text = long_reply[1:]   # the finished long message, handled as one request below
+
         started = time.monotonic()
         # Talking to Jarvis after 4am ends night mode; mention anything that came in overnight.
         woke = datetime.now().hour >= 4 and self.announcer.wake()
@@ -65,6 +73,35 @@ class Runtime:
         if woke and held:
             reply += f" Also, good morning: {held} thing{'s' if held != 1 else ''} came in overnight. Ask me what you missed."
         return reply
+
+    _LONG_START = re.compile(r"^(ok(ay)?,? |hey jarvis,? )?(i have a long (one|message|request|question)|"
+                             r"long (message|one|request)|let me explain( something)?|start dictation|"
+                             r"dictation mode|this is going to be a long one)\W*$", re.I)
+    _LONG_END = re.compile(r"^(ok(ay)?,? )?(done|i'?m done|that'?s it|that is (it|all)|finished|over|send it|"
+                           r"go( ahead)?|end message)\W*$", re.I)
+    _LONG_CANCEL = re.compile(r"^(cancel|never ?mind|forget it|scratch that)\W*$", re.I)
+    _ACKS = ["Mm-hm.", "Go on.", "Got it, keep going.", "Okay.", "I'm with you.", "Carry on."]
+
+    def _long_message(self, text: str) -> str | None:
+        """Long-message mode, for Siri cutting you off at every pause. Returns a reply, None (not in
+        this mode), or "\x00" + the full message once the user says "done"."""
+        cleaned = text.strip()
+        if self.dictation is None:
+            if self._LONG_START.match(cleaned):
+                self.dictation = []
+                return "Go ahead. Take your time, and say done when you're finished."
+            return None
+        if self._LONG_CANCEL.match(cleaned):
+            self.dictation = None
+            return "Scrapped. What would you like instead?"
+        end = self._LONG_END.match(cleaned)
+        if not end:
+            self.dictation.append(cleaned)
+            return self._ACKS[len(self.dictation) % len(self._ACKS)]
+        full, self.dictation = " ".join(self.dictation).strip(), None
+        if not full:
+            return "I didn't catch anything. What did you want to say?"
+        return "\x00" + full
 
     def morning(self) -> str:
         """'Good morning, Jarvis' (or the wake-up automation): ends night mode and gives the rundown:
