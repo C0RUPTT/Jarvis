@@ -9,7 +9,7 @@
     /city     your city for the morning weather, e.g. /city Dallas
     /backup   back up memory, reminders and projects to your private GitHub now (also nightly)
     /restore  bring a backup back onto a new server
-    /notifysetup  public link so Claude Code can tell Jarvis when it's done
+    /notifysetup  how Claude Code tells Jarvis it's done; /notifycheck shows if that's working
     /github <key> connect your GitHub so Jarvis can work on your projects
     /textsetup    spoken alerts by text message (see docs/SPOKEN_TEXTS.md); /texttest, /textalt, /textoff
     /help     list of commands
@@ -251,6 +251,27 @@ def notify_setup(config) -> str:
     )
 
 
+def notify_check(config, rt=None) -> str:
+    import time as _t
+
+    from . import claude_sessions, notify_listener
+
+    st = notify_listener.STATUS
+    ago = lambda ts: f"{int(_t.time() - ts)}s ago" if ts else "never"  # noqa: E731
+    lines = [
+        f"Listening on: {st['topic'] or '(listener not started!)'}",
+        f"Connected: {'yes, since ' + ago(st['connected_since']) if st['connected_since'] else 'NO'}",
+        f"Pings received since start: {st['messages']} (last {ago(st['last_message'])})",
+    ]
+    if st["last_error"]:
+        lines.append(f"Last error: {st['last_error']}")
+    if rt is not None:
+        lines.append(f"Announcements: {rt.claude_watch}")
+    sessions = claude_sessions.load(config.data_dir)
+    lines.append("Known sessions: " + (", ".join(f"{s['project']} ({s['id'][:16]}...)" for s in sessions[:6]) or "none"))
+    return "\n".join(lines)
+
+
 def set_env_value(key: str, value: str) -> None:
     env = ROOT / ".env"
     lines = [l for l in (env.read_text().splitlines() if env.exists() else []) if not l.startswith(key + "=")]
@@ -274,6 +295,7 @@ def commands(config, jobs, brain=None) -> dict:
         "shortcut": lambda: shortcut(config),
         "timezone": set_timezone,
         "city": set_city,
+        "notifycheck": lambda: notify_check(config, getattr(brain, "_runtime", None)),
         "backup": lambda: __import__("jarvis.backup", fromlist=["x"]).backup_now(config),
         "restore": lambda: __import__("jarvis.backup", fromlist=["x"]).restore(config),
         "notifysetup": lambda: notify_setup(config),

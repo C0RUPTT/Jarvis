@@ -14,7 +14,12 @@ import time
 import urllib.request
 
 
+STATUS: dict = {"topic": "", "connected_since": 0.0, "last_message": 0.0, "messages": 0, "last_error": ""}
+
+
 def start(topic: str, on_done) -> None:
+    STATUS["topic"] = topic
+
     def loop():
         since = str(int(time.time()))
         while True:
@@ -22,11 +27,13 @@ def start(topic: str, on_done) -> None:
                 req = urllib.request.Request(f"https://ntfy.sh/{topic}/json?since={since}",
                                              headers={"User-Agent": "jarvis-assistant"})
                 with urllib.request.urlopen(req, timeout=90) as resp:
+                    STATUS["connected_since"], STATUS["last_error"] = time.time(), ""
                     for raw in resp:
                         event = json.loads(raw)
                         if event.get("event") != "message":
                             continue
                         since = event.get("id", since)
+                        STATUS["last_message"], STATUS["messages"] = time.time(), STATUS["messages"] + 1
                         try:
                             data = json.loads(event.get("message") or "{}")
                         except json.JSONDecodeError:
@@ -35,7 +42,9 @@ def start(topic: str, on_done) -> None:
                             on_done(str(data.get("label", ""))[:60], str(data.get("summary", ""))[:500],
                                     int(data.get("seconds", -1) or -1), str(data.get("session", ""))[:80])
             except Exception as e:  # noqa: BLE001 - network blips: reconnect quietly
+                STATUS["connected_since"] = 0.0
                 if "timed out" not in str(e):
+                    STATUS["last_error"] = f"{time.strftime('%H:%M:%S')} {e}"
                     print(f"[notify] reconnecting after: {e}")
                 time.sleep(5)
 

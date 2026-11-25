@@ -56,3 +56,20 @@ def send_to_claude_session(ctx, session: str, message: str):
     if rt_watch is not None and rt_watch.claude_watch == "off":
         rt_watch.claude_watch = "once"   # they're waiting for this answer
     return f"Sent to {target}. The user will hear when it's done."
+
+
+@tool(
+    "register_claude_session",
+    "Remember a Claude Code session the user gives you by link (claude.ai/code/session_...) so you can "
+    "send messages into it later. 'project' is what the user calls it, e.g. Jarvis or flight tracker.",
+    {"link": {"type": "string"}, "project": {"type": "string"}},
+    ["link", "project"],
+)
+def register_claude_session(ctx, link: str, project: str):
+    from .. import claude_sessions
+
+    sid = claude_sessions.normalize(link)
+    if not sid.startswith("session_"):
+        return "That doesn't look like a Claude Code session link (claude.ai/code/session_...)."
+    claude_sessions.seen(ctx.config.data_dir, project, sid, "(registered by link)")
+    return f"Saved: '{project}' is {sid}."

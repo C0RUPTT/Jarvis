@@ -272,6 +272,7 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
         notify_listener.start(config.notify_topic, rt.claude_code_finished)
     rt.claude_watch = rt._watch_default()
     ctx.extras["runtime"] = rt
+    brain._runtime = rt   # lets /notifycheck show the announcement mode
 
     if telegram and config.telegram_token and config.telegram_user_id:
         from .telegram import TelegramBot
