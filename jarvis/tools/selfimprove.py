@@ -62,7 +62,7 @@ def improve_jarvis(ctx, problem: str, desired: str):
         if not error:
             rt = ctx.extras.get("runtime")
             if rt is not None:
-                rt.awaiting.add(dev["id"])
+                rt.await_reply(dev["id"])
             return "Sent to the Jarvis development session; its reply will be read out when it's done."
     jobs = ctx.extras.get("jobs")
     if jobs is None:

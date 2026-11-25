@@ -24,7 +24,7 @@ from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
 
 WEB_DIR = Path(__file__).parent / "web"
-STILL_WORKING = "Still working on that. Ask me \"is it ready?\" in a moment, or I'll message you the answer."
+STILL_WORKING = "One moment, sir."   # the Shortcut then waits for the answer via /api/wait
 HANDOFF_GRACE = 20  # seconds a finished late answer waits for your next Siri turn before it's sent to Telegram
 # Ways people end a Siri conversation, including how dictation mishears "bye" ("by", "buy").
 GOODBYE = re.compile(
@@ -116,14 +116,14 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if waiting and not earlier:   # wait (within budget) for the oldest unfinished answer
                 concurrent.futures.wait([waiting[0]["future"]], timeout=config.siri_budget)
                 earlier = _take_finished() + rt.take_siri_inbox()
-            if not earlier and rt.awaiting:   # waiting on a Claude Code session's reply
+            if not earlier and rt.active_awaiting():   # waiting on a Claude Code session's reply
                 deadline = time.time() + config.siri_budget
                 while time.time() < deadline and not rt.siri_inbox:
                     time.sleep(0.5)
                 earlier = rt.take_siri_inbox()
             if earlier:
                 return " ".join(earlier)
-            if rt.awaiting:
+            if rt.active_awaiting():
                 return "The session is still working on it. Ask me again in a moment."
             return "Still on it. Give me another moment." if waiting else "Nothing pending; ask away."
 
@@ -256,6 +256,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             # Only include "open" when there is a link: Shortcuts counts an empty string as
             # "has any value" and would try to open it.
             result = {"say": reply}
+            with pending_lock:
+                still_pending = any(not p["delivered"] for p in pending)
+            if reply == clean_for_speech(STILL_WORKING) or still_pending or rt.active_awaiting():
+                result["wait"] = "yes"   # the Shortcut calls /api/wait and speaks the answer when ready
             late_link = announcer.take_recent_open()
             if opens:
                 result["open"] = opens[-1]["url"]
@@ -272,6 +276,32 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             print(f"JARVIS: {reply}")
             return PlainTextResponse(reply)
         return respond(rt.ask(text), heard=text, with_audio=bool(payload.get("audio", True)))
+
+    @app.post("/api/wait")
+    def wait_for_answer(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),
+                        token: str | None = Query(None)):
+        """Called by the Siri Shortcut after "One moment": waits (up to the Siri budget) for a late
+        answer or a Claude Code session's reply, and returns it to be spoken. "wait": "yes" again
+        if it's still not ready."""
+        check(x_jarvis_token or token or payload.get("token"))
+        rt.last_siri = time.time()
+        deadline = time.time() + config.siri_budget
+        while time.time() < deadline:
+            ready = _take_finished() + rt.take_siri_inbox()
+            if ready:
+                announcer.begin_capture()
+                link = announcer.take_recent_open()
+                announcer.end_capture()
+                result = {"say": clean_for_speech(" ".join(ready))}
+                if link:
+                    result["open"] = link
+                return result
+            with pending_lock:
+                waiting = any(not p["delivered"] for p in pending)
+            if not waiting and not rt.active_awaiting():
+                return {"say": "Anything else, sir?"}
+            time.sleep(0.4)
+        return {"say": "Still working on it, sir.", "wait": "yes"}
 
     @app.post("/api/wake")
     def wake(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None),

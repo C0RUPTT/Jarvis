@@ -59,8 +59,8 @@ def _relay(text: str, rt) -> str | None:
     error = claude_sessions.send(match["id"], m.group("message").strip())
     if error:
         return f"I couldn't reach your {match['project']} session: {error}"
-    rt.awaiting.add(match["id"])
-    return f"Sent to your {match['project']} session. I'll read you its reply; ask me 'is it ready?' in a moment."
+    rt.await_reply(match["id"])
+    return f"Sent to your {match['project']} session. I'll read you its reply when it comes."
 
 
 def handle(text: str, rt) -> str | None:

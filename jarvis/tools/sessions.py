@@ -53,7 +53,7 @@ def send_to_claude_session(ctx, session: str, message: str):
         return f"Couldn't send it: {error}"
     rt = ctx.extras.get("runtime")
     if rt is not None:
-        rt.awaiting.add(claude_sessions.normalize(target))   # its next reply is read out, however quick
+        rt.await_reply(claude_sessions.normalize(target))   # its next reply is read out, however quick
     return (f"Sent to {target}. Its reply will be read to the user when it arrives (they can ask "
             "'is it ready?'). Say so in a few words.")
 

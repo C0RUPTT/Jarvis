@@ -36,6 +36,18 @@ class Runtime:
     def __post_init__(self):
         self.awaiting = set()
         self.siri_inbox = []
+        self._awaiting_since: dict = {}
+
+    def await_reply(self, session_id: str) -> None:
+        self.awaiting.add(session_id)
+        self._awaiting_since[session_id] = time.time()
+
+    def active_awaiting(self) -> set:
+        """Sessions we're still waiting on (forget ones that haven't replied in 10 minutes)."""
+        for sid in list(self.awaiting):
+            if time.time() - self._awaiting_since.get(sid, 0) > 600:
+                self.awaiting.discard(sid)
+        return self.awaiting
 
     def deliver(self, text: str, urgent: bool = True) -> None:
         """Tell the user something now. If a Siri conversation is going on, it's spoken there on the
