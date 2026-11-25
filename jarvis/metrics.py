@@ -44,7 +44,9 @@ def report(data_dir: Path, days: float = 3) -> str:
     since = time.time() - days * 86400
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     rows = [r for r in rows if r["t"] >= since]
-    lines = [f"Last {days:g} days:"]
+    hours = days * 24
+    span = ("the last hour" if hours == 1 else f"the last {hours:g} hours") if days < 1 else f"the last {days:g} days"
+    lines = [f"{span[0].upper()}{span[1:]}:"]
     for kind in ("siri", "web", "fast", "turn", "telegram", "job"):
         group = [r for r in rows if r["kind"] == kind]
         if not group:
@@ -57,8 +59,17 @@ def report(data_dir: Path, days: float = 3) -> str:
             f"new tokens {fresh:,}  cached {sum(r['cache_read'] for r in group):,}  "
             f"output {sum(r['tokens_out'] for r in group):,}"
         )
+    med = lambda xs: f"{statistics.median(xs):.1f}s" if xs else "n/a"   # noqa: E731
     web = [r for r in rows if r["kind"] == "web" and "stt" in r]
     if web:
-        lines.append(f"  web app: hearing you {statistics.median(r['stt'] for r in web):.1f}s, "
-                     f"thinking {statistics.median(r['think'] for r in web):.1f}s (medians)")
+        recorded = [r for r in web if not r.get("on_phone")]
+        lines.append("  web app, per answer (medians):")
+        lines.append(f"    turning your voice into text  {med([r['stt'] for r in recorded])}  ({len(recorded)} recorded)")
+        lines.append(f"    waiting in line               {med([r['queue'] for r in web if 'queue' in r])}")
+        lines.append(f"    Claude thinking               {med([r['think'] for r in web])}")
+    e2e = [r["seconds"] for r in rows if r["kind"] == "web_e2e"]
+    if e2e:
+        lines.append(f"    you stop talking -> Jarvis starts talking  {med(e2e)}  ({len(e2e)} measured)")
+    if days >= 1:
+        lines.append("Tip: /stats 1 shows just the last hour.")
     return "\n".join(lines)

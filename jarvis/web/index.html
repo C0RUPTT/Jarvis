@@ -299,6 +299,11 @@
       player.play().catch(() => finish("failed"));
     });
   }
+  let turnEndedAt = 0;
+  function reportTiming() {   // measured on the phone: you stop talking -> Jarvis starts talking
+    if (!turnEndedAt) return;
+    diag("timing", { e2e: +((performance.now() - turnEndedAt) / 1000).toFixed(2) }); turnEndedAt = 0;
+  }
   async function speakParts(data) {
     const run = ++speechRun, parts = data.speech_parts;
     let next = fetchPart(data.speech_id, 0);
@@ -306,6 +311,7 @@
       const blob = await next;
       if (run !== speechRun) return;                        // interrupted
       next = i + 1 < parts.length ? fetchPart(data.speech_id, i + 1) : null;
+      if (i === 0 && blob) player.addEventListener("playing", reportTiming, { once: true });
       const failed = !blob || (await playBlob(blob)) === "failed";
       if (failed) await new Promise(r => speakLocally(parts[i], r));
       if (run !== speechRun) return;
@@ -464,7 +470,7 @@
     srTimer = setInterval(() => {
       const now = performance.now();
       if (text && now - lastHeard > 1500) {                       // a 1.5-second pause: they've finished
-        done = true; stopSR();
+        done = true; stopSR(); turnEndedAt = lastHeard;
         if (GOODBYE.test(text.trim())) goStandby(); else sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
         done = true; stopSR(); listen();
@@ -543,6 +549,7 @@
       if (speechStart && now - lastLoud > 1200) {                // a 1.2-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
+        turnEndedAt = performance.now() - 1200;   // when you actually stopped talking
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
         recorder.stop();
       } else if (!speechStart && now - recStart > 15000) {       // long silence: start a fresh clip

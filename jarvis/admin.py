@@ -318,7 +318,8 @@ def commands(config, jobs, brain=None) -> dict:
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
-        "stats": lambda: __import__("jarvis.metrics", fromlist=["x"]).report(config.data_dir),
+        "stats": lambda arg="": __import__("jarvis.metrics", fromlist=["x"]).report(
+            config.data_dir, (float(arg) / 24) if arg.replace(".", "", 1).isdigit() else 3),
         "shortcut": lambda: shortcut(config, getattr(brain, "_telegram", None)),
         "timezone": set_timezone,
         "city": set_city,

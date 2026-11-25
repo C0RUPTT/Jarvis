@@ -255,6 +255,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             return {"heard": "", "reply": "", "speech": "", "audio": None}
         if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
             return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
+        queued_at = time.monotonic()
         with web_turn:   # one app message at a time, so a newer one can replace those still queued
             for _ in range(600):   # a Siri request goes first: Siri can only wait a few seconds
                 if not siri_waiting[0]:
@@ -263,9 +264,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if talk_id and _superseded(talk_id):   # you've already said something newer: skip this one
                 print(f"[web] skipped an older message: {heard!r}")
                 return {"heard": "", "reply": "", "speech": "", "audio": None}
+            asked_at = time.monotonic()
             reply = rt.ask(heard)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
-                       think=round(time.monotonic() - heard_at, 2), on_phone=bool(text))
+                       queue=round(asked_at - queued_at, 2), think=round(time.monotonic() - asked_at, 2),
+                       on_phone=bool(text))
         print(f"JARVIS: {reply}")
         # Voice, sentence by sentence: the first sentence is short, so its audio is ready almost at
         # once and Jarvis starts talking while the rest is still being generated (all in parallel,
@@ -636,6 +639,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     def diag(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
         """Microphone diagnostics from the web app (levels, recognition errors), printed for /logs."""
         check(x_jarvis_token)
+        if payload.get("event") == "timing" and isinstance(payload.get("e2e"), (int, float)):
+            metrics.record("web_e2e", float(payload["e2e"]))   # you stop talking -> Jarvis starts talking
+            return {"ok": True}
         print(f"[web mic] {json.dumps(payload)[:400]}")
         return {"ok": True}
 
