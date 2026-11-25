@@ -21,7 +21,8 @@
   header { display: flex; justify-content: space-between; align-items: center; padding: 14px 0 6px; }
   header h1 { font-size: 15px; letter-spacing: .35em; font-weight: 600; margin: 0; color: var(--accent); }
   header button { background: none; border: 1px solid var(--line); color: var(--muted);
-    border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+    border-radius: 999px; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+  header { gap: 8px; }
   #log { flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 10px;
     mask-image: linear-gradient(to bottom, transparent, #000 24px); }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; }
@@ -55,8 +56,15 @@
   #handoff b { font-size: 2rem; }
   body.needs-token #log, body.needs-token #stage, body.needs-token #chat { display: none; }
   [hidden] { display: none !important; }
+  /* ---- voice mode (default): just Jarvis, no text; the transcript is one tap away ---- */
+  body.voice #log, body.voice #chat { display: none; }
+  body.voice #stage { flex: 1; justify-content: center; gap: 28px; }
+  body.voice #orb { width: 220px; height: 220px; }
+  body.voice #status { font-size: 13px; letter-spacing: .2em; text-transform: uppercase; opacity: .7; }
+  #linkChip { display: none; }
+  body.voice #linkChip:not([hidden]) { display: inline-block; }
   /* ---- views & tabs ---- */
-  .tabs { display: flex; gap: 6px; }
+  .tabs { display: flex; gap: 5px; }
   .tabs button.active { color: var(--text); border-color: var(--accent); }
   .view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .view[hidden] { display: none; }
@@ -106,11 +114,12 @@
 </head>
 <body data-state="idle">
 <header>
-  <h1>J.A.R.V.I.S.</h1>
+  <h1>JARVIS</h1>
   <div class="tabs">
     <button id="tabTalk" type="button" class="active">Talk</button>
     <button id="tabDash" type="button">Dashboard</button>
-    <button id="reset" type="button">New chat</button>
+    <button id="textToggle" type="button">Text</button>
+    <button id="reset" type="button" aria-label="New chat">New</button>
   </div>
 </header>
 
@@ -125,6 +134,7 @@
 <div id="stage">
   <button id="orb" aria-label="Talk to Jarvis"></button>
   <div id="status">Tap to talk</div>
+  <a id="linkChip" class="small" target="_blank" hidden></a>
 </div>
 
 <form id="chat" autocomplete="off">
@@ -210,7 +220,25 @@
     if (s !== "listening") orb.style.setProperty("--level", 0);
   }
 
+  // Voice mode is the default; "Text" in the header shows the transcript and the typing box.
+  const voicePref = safeGet("jarvis-voice-mode");
+  document.body.classList.toggle("voice", voicePref !== "off");
+  $("textToggle").onclick = () => {
+    const voice = !document.body.classList.toggle("voice");
+    safeSet("jarvis-voice-mode", voice ? "on" : "off");
+    $("textToggle").classList.toggle("active", !voice);
+    log.scrollTop = log.scrollHeight;
+  };
+  $("textToggle").classList.toggle("active", voicePref === "off");
+
   function add(kind, text, link) {
+    if (link) {   // in voice mode a link still needs somewhere to be tapped
+      const chip = $("linkChip"); chip.href = link; chip.textContent = (text || "Open") + " ↗"; chip.hidden = false;
+      setTimeout(() => { chip.hidden = true; }, 60000);
+    }
+    if (kind === "sys" && document.body.classList.contains("voice") && /⚠|Using the server/.test(text)) {
+      const t = $("toast"); if (t) { t.textContent = text; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 4000); }
+    }
     const div = document.createElement("div");
     div.className = "msg " + kind; div.textContent = text;
     if (link) { const a = document.createElement("a"); a.href = link; a.textContent = " Open ↗"; div.appendChild(a); }
@@ -242,13 +270,38 @@
     if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
   }
 
+  // Sentence by sentence: the server makes each sentence's audio in parallel, so the first one is
+  // ready almost at once; the next is downloaded while the current one plays.
+  let speechRun = 0;
+  function fetchPart(id, i) {
+    return fetch(`/api/speech/${id}/${i}`, { headers: { "X-Jarvis-Token": token } })
+      .then(r => r.ok ? r.blob() : null).catch(() => null);
+  }
+  function playBlob(blob) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      player.src = url;
+      player.onended = player.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+      player.play().catch(() => { URL.revokeObjectURL(url); resolve("failed"); });
+    });
+  }
+  async function speakParts(data) {
+    const run = ++speechRun, parts = data.speech_parts;
+    let next = fetchPart(data.speech_id, 0);
+    for (let i = 0; i < parts.length; i++) {
+      const blob = await next;
+      if (run !== speechRun) return;                        // interrupted
+      next = i + 1 < parts.length ? fetchPart(data.speech_id, i + 1) : null;
+      const failed = !blob || (await playBlob(blob)) === "failed";
+      if (failed) await new Promise(r => speakLocally(parts[i], r));
+      if (run !== speechRun) return;
+    }
+  }
+
   function speak(data) {
     return new Promise((resolve) => {
-      if (data.audio_url) {   // streamed: starts playing as soon as the first words are ready
-        player.src = data.audio_url + "?token=" + encodeURIComponent(token);
-        player.onended = resolve;
-        player.onerror = () => speakLocally(data.speech, resolve);
-        player.play().catch(() => speakLocally(data.speech, resolve));
+      if (data.speech_id && data.speech_parts?.length) {
+        speakParts(data).then(resolve);
       } else if (data.audio) {
         player.src = "data:audio/mpeg;base64," + data.audio;
         player.onended = player.onerror = resolve;
@@ -265,6 +318,7 @@
     speechSynthesis.speak(u);
   }
   function stopSpeaking() {
+    speechRun++;
     player.pause(); player.onended && player.onended();
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }
@@ -324,8 +378,8 @@
         joined = t.toLowerCase().startsWith(joined.toLowerCase()) ? t : (joined + " " + t).trim();
       }
       text = joined; lastHeard = performance.now();
-      statusEl.textContent = text;
-      orb.style.setProperty("--level", 0.5);
+      if (!document.body.classList.contains("voice")) statusEl.textContent = text;
+      orb.style.setProperty("--level", 0.45 + Math.random() * 0.25);
     };
     rec.onerror = (e) => {
       if (["not-allowed", "service-not-allowed", "audio-capture"].includes(e.error)) {

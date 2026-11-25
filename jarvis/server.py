@@ -178,7 +178,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     talks: dict[str, dict] = {}   # async web-app turns: id -> {"status", "result", "done_at", "fetched"}
     talks_lock = threading.Lock()
 
-    speech_texts: dict[str, tuple[float, str]] = {}   # id -> (created, text): streamed by /api/speech
+    speech_jobs: dict[str, dict] = {}   # id -> sentence audio for a web-app answer (see /api/speech)
 
     def _process_talk(path: str = "", text: str = "") -> dict:
         started = time.monotonic()
@@ -197,36 +197,59 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        think=round(time.monotonic() - heard_at, 2), on_phone=bool(text))
         print(f"JARVIS: {reply}")
-        # Don't make the phone wait for the whole voice recording: it streams the audio from
-        # /api/speech and starts playing as soon as the first words are ready.
+        # Voice, sentence by sentence: the first sentence is short, so its audio is ready almost at
+        # once and Jarvis starts talking while the rest is still being generated (all in parallel,
+        # starting now, before the phone even asks).
+        parts = _speech_parts(clean_for_speech(reply)) if config.online_voice else []
+        speech_id = _start_speech(parts) if parts else ""
+        return {"heard": heard, "reply": reply, "speech": clean_for_speech(reply), "audio": None,
+                "speech_id": speech_id, "speech_parts": parts}
+
+    def _speech_parts(text: str) -> list[str]:
+        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
+        if not sentences:
+            return []
+        parts = [sentences[0]]
+        for sentence in sentences[1:]:
+            if len(parts) > 1 and len(parts[-1]) + len(sentence) < 220:
+                parts[-1] += " " + sentence
+            else:
+                parts.append(sentence)
+        return parts[:12]
+
+    def _start_speech(parts: list[str]) -> str:
         import secrets as _secrets
 
         speech_id = _secrets.token_urlsafe(8)
-        for old in [k for k, (t, _) in speech_texts.items() if time.time() - t > 600]:
-            speech_texts.pop(old, None)
-        speech_texts[speech_id] = (time.time(), reply)
-        return {"heard": heard, "reply": reply, "speech": clean_for_speech(reply), "audio": None,
-                "audio_url": f"/api/speech/{speech_id}" if config.online_voice else None}
+        for old in [k for k, v in speech_jobs.items() if time.time() - v["created"] > 600]:
+            speech_jobs.pop(old, None)
+        job = {"created": time.time(), "audio": [None] * len(parts), "ready": [threading.Event() for _ in parts]}
+        speech_jobs[speech_id] = job
 
-    @app.get("/api/speech/{speech_id}")
-    def speech(speech_id: str, token: str | None = Query(None), x_jarvis_token: str | None = Header(None)):
-        """Jarvis's voice for a web-app answer, streamed as it's generated."""
+        def make(i: int) -> None:
+            try:
+                job["audio"][i] = synthesize_mp3(parts[i], config.online_voice) or b""
+            finally:
+                job["ready"][i].set()
+        for i in range(len(parts)):
+            threading.Thread(target=make, args=(i,), daemon=True).start()
+        return speech_id
+
+    @app.get("/api/speech/{speech_id}/{part}")
+    def speech(speech_id: str, part: int, token: str | None = Query(None),
+               x_jarvis_token: str | None = Header(None)):
+        """One sentence of Jarvis's voice for a web-app answer (MP3). 404 = use the phone's voice."""
         check(x_jarvis_token or token)
-        item = speech_texts.get(speech_id)
-        if not item:
-            raise HTTPException(status_code=404, detail="Unknown or expired speech")
-        text = clean_for_speech(item[1])
+        job = speech_jobs.get(speech_id)
+        if not job or not 0 <= part < len(job["audio"]):
+            raise HTTPException(status_code=404, detail="Unknown speech")
+        job["ready"][part].wait(timeout=20)
+        audio = job["audio"][part]
+        if not audio:
+            raise HTTPException(status_code=404, detail="Voice unavailable")
+        from fastapi.responses import Response
 
-        async def chunks():
-            import edge_tts
-
-            async for chunk in edge_tts.Communicate(text, config.online_voice).stream():
-                if chunk["type"] == "audio":
-                    yield chunk["data"]
-
-        from fastapi.responses import StreamingResponse
-
-        return StreamingResponse(chunks(), media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+        return Response(audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
     def _finish_talk(talk_id: str, future) -> None:
         try:
