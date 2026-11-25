@@ -224,7 +224,14 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
 
         def job_finished(job):
             verb = {"done": "is done", "failed": "hit a problem"}.get(job.status, job.status)
-            announcer.announce(f"Job {job.id} {verb}. {job.result}", quiet=job.quiet)
+            text = f"Job {job.id} {verb}. {job.result}"
+            if job.preview:
+                from . import admin
+
+                host = admin.public_host()
+                if host:
+                    text += f"\nTry it: https://{host}/preview/{job.preview}"
+            announcer.announce(text, quiet=job.quiet)
 
         jobs = JobRunner(config.data_dir, config.projects_dir, config.worker_model,
                          config.cc_permission_mode, on_finished=job_finished)

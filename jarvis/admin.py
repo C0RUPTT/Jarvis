@@ -155,6 +155,26 @@ def logs() -> str:
     return "Couldn't read the log (no permission)."
 
 
+_host_cache: list = []
+
+
+def public_host() -> str:
+    """This server's private Tailscale name (e.g. jarvis.tail1234.ts.net), cached."""
+    if _host_cache:
+        return _host_cache[0]
+    import json
+
+    tailscale = shutil.which("tailscale")
+    if tailscale:
+        _, out = _run([tailscale, "status", "--json"], timeout=15)
+        try:
+            _host_cache.append(json.loads(out)["Self"]["DNSName"].rstrip("."))
+            return _host_cache[0]
+        except (ValueError, KeyError):
+            pass
+    return ""
+
+
 def shortcut(config) -> str:
     """Ready-to-paste links (token included) for the Siri Shortcut and the alarm automation."""
     import json

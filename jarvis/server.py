@@ -123,6 +123,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             reply = STILL_WORKING
         return " ".join(earlier + [reply])
 
+    # Apps that coding jobs build, viewable on the phone. Only reachable inside your private
+    # Tailscale network (the public Funnel only exposes /notify).
+    from fastapi.staticfiles import StaticFiles
+
+    config.projects_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/preview", StaticFiles(directory=config.projects_dir, html=True), name="preview")
+
     @app.get("/")
     def index():
         return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
@@ -241,6 +248,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         return {
             "id": j.id, "task": j.task, "status": j.status, "result": j.result,
             "continues": j.continues, "activity": j.activity[-15:],
+            "preview": f"/preview/{j.preview}" if getattr(j, "preview", "") else "",
             "seconds": int((j.finished or now) - (j.started or j.created)) if j.started else 0,
             "created": j.created,
         }

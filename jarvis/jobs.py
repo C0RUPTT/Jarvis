@@ -44,6 +44,7 @@ class Job:
     continues: int | None = None    # id of the job this one follows up on
     quiet: bool = False             # deliver silently
     activity: list = field(default_factory=list)   # live log of what the worker is doing (dashboard)
+    preview: str = ""                               # path of a web page it built, under /preview/
 
     def describe(self) -> str:
         age = int(time.time() - (self.started or self.created))
@@ -162,6 +163,7 @@ class JobRunner:
             self._current = None
 
         result = result_event or _parse_result(output)
+        job.preview = find_preview(self.workdir, since=job.started or 0)
         with self._lock:
             if job.status == "cancelled":
                 return
@@ -202,6 +204,30 @@ class JobRunner:
     def _save(self) -> None:
         recent = sorted(self.jobs.values(), key=lambda j: j.id)[-200:]
         self.state_file.write_text(json.dumps([asdict(j) for j in recent], indent=1))
+
+
+PREVIEW_DIRS = ("", "dist", "build", "public", "out", "site", "docs")
+
+
+def find_preview(projects: Path, since: float) -> str:
+    """The most recently changed project with a web page to open, as a path like 'coinflip/' or
+    'flight-tracker/dist/'. Empty if the job didn't build a viewable page."""
+    best, best_time = "", since - 5
+    if not projects.exists():
+        return ""
+    for project in projects.iterdir():
+        if not project.is_dir() or project.name.startswith("."):
+            continue
+        for sub in PREVIEW_DIRS:
+            page = project / sub / "index.html"
+            if page.exists():
+                changed = max((f.stat().st_mtime for f in (project / sub).rglob("*")
+                               if f.is_file() and "node_modules" not in f.parts and ".git" not in f.parts),
+                              default=0)
+                if changed > best_time:
+                    best, best_time = f"{project.name}/{sub + '/' if sub else ''}", changed
+                break
+    return best
 
 
 def _json_or_none(line: str):
