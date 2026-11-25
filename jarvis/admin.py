@@ -66,12 +66,22 @@ def _head() -> str:
     return _run(["git", "rev-parse", "HEAD"], timeout=10)[1].strip()
 
 
+FAILED_FILE = Path.home() / ".jarvis" / "failed-update"
+
+
+def _upstream() -> str:
+    return _run(["git", "rev-parse", "@{u}"], timeout=10)[1].strip()
+
+
 def update_available() -> bool:
     code, _ = _run(["git", "fetch", "-q", "origin"], timeout=60)
     if code != 0:
         return False
     code, out = _run(["git", "rev-list", "--count", "HEAD..@{u}"], timeout=10)
-    return code == 0 and out.strip().isdigit() and int(out.strip()) > 0
+    if not (code == 0 and out.strip().isdigit() and int(out.strip()) > 0):
+        return False
+    # Don't retry a version that already failed its checks; wait for a newer one.
+    return not (FAILED_FILE.exists() and FAILED_FILE.read_text().strip() == _upstream())
 
 
 def update() -> str:
@@ -90,6 +100,11 @@ def update() -> str:
         code, pip_out = _run([sys.executable, "-c", "import jarvis.server, jarvis.runtime, jarvis.telegram"],
                              timeout=120)
     if code != 0:
+        try:
+            FAILED_FILE.parent.mkdir(parents=True, exist_ok=True)
+            FAILED_FILE.write_text(_head())
+        except OSError:
+            pass
         _run(["git", "reset", "--hard", before], timeout=30)
         return f"The update failed its checks, so I rolled back to the previous version.\n{pip_out[-600:]}"
     _restart_soon()
