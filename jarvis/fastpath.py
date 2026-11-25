@@ -34,6 +34,24 @@ _PATTERNS = [
 _COMPILED = [(name, re.compile(p, re.I)) for name, p in _PATTERNS]
 
 
+# "Switch to the app": hand a Siri conversation over to the web app (same conversation, no time limits).
+HANDOFF = re.compile(
+    r"^(?:ok(?:ay)?,? |hey jarvis,? |jarvis,? )?(?:let'?s |can we |could we |please |i want to )?"
+    r"(?:switch|move|go|take (?:this|it)|continue|carry on|talk|keep talking|finish (?:this|it)|pick (?:this|it) up)"
+    r"\s+(?:over\s+)?(?:to|in|on)\s+(?:the\s+)?(?:jarvis\s+|web\s+)?app(?:\s+(?:instead|now|please))*\W*$"
+    r"|^(?:please )?open (?:the )?(?:jarvis|web) app\W*$|^open (?:yourself|jarvis)\W*$", re.I)
+
+
+def app_link(rt) -> str:
+    from .admin import public_host
+
+    host = public_host() or f"localhost:{rt.config.port}"
+    from urllib.parse import quote
+
+    # The token rides along so Safari works even if only the home-screen app was set up.
+    return f"https://{host}/?talk=1&token={quote(rt.config.token or '')}"
+
+
 RELAY = re.compile(
     r"^(?:please |can you |could you )?(?:pick up on|pick up|continue|go back to|tell|ask|message|send to)\s+"
     r"(?:on\s+)?(?:my\s+|the\s+)?(?P<project>[\w .'-]{2,40}?)\s+(?:code\s+|claude\s+code\s+)?session"
@@ -66,6 +84,9 @@ def _relay(text: str, rt) -> str | None:
 def handle(text: str, rt) -> str | None:
     """Return a reply if this is a fast-path command, otherwise None (send it to Claude)."""
     cleaned = re.sub(r"^(hey |ok |okay )?jarvis[,.!]?\s*", "", text.strip(), flags=re.I).strip(" .!?")
+    if HANDOFF.match(text.strip()) and rt is not None:
+        rt.announcer.open_on_phone(app_link(rt), "Jarvis")
+        return "Over to the app, sir. Tap the screen once and carry on; I remember where we were."
     relayed = _relay(cleaned, rt)
     if relayed is not None:
         return relayed

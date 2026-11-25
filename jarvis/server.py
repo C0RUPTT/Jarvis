@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from . import metrics, runtime
+from . import fastpath, metrics, runtime
 from .config import Config
 from .voice.tts import clean_for_speech, synthesize_mp3
 
@@ -149,6 +149,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     def index():
         return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/api/recent")
+    def recent(x_jarvis_token: str | None = Header(None)):
+        """The last few exchanges from any channel (Siri, Telegram), so the app continues the chat."""
+        check(x_jarvis_token)
+        return {"turns": [t for t in rt.recent if time.time() - t["time"] < 1800]}
+
     @app.get("/api/status")
     def status(x_jarvis_token: str | None = Header(None)):
         check(x_jarvis_token)
@@ -243,6 +249,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if format == "siri" and rt.dictation is None and GOODBYE.match(text.strip()):
             # Tell the Shortcut to end the conversation (its own "bye" check misses "by", "that's all"...).
             return {"say": FAREWELLS[int(time.time()) % len(FAREWELLS)], "stop": "yes"}
+        if format == "siri" and rt.dictation is None and fastpath.HANDOFF.match(text):
+            # Hand the conversation to the web app: open it and end the Siri loop.
+            rt.recent = (rt.recent + [{"you": text, "jarvis": "(switched to the app)", "time": time.time()}])[-8:]
+            return {"say": "Over to the app, sir. Tap the screen once and carry on.",
+                    "open": fastpath.app_link(rt), "stop": "yes"}
         if format == "siri":
             # For the Siri Shortcut: what to say, plus phone actions for the Shortcut to perform.
             started = time.monotonic()

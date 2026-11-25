@@ -50,6 +50,9 @@
     padding: 0 18px; font-weight: 600; font-size: 15px; }
   #setup { display: none; flex: 1; flex-direction: column; justify-content: center; gap: 12px; text-align: center; }
   body.needs-token #setup { display: flex; }
+  #handoff { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    text-align: center; font-size: 1.3rem; line-height: 1.6; background: rgba(0,0,0,.82); color: #fff; }
+  #handoff b { font-size: 2rem; }
   body.needs-token #log, body.needs-token #stage, body.needs-token #chat { display: none; }
   [hidden] { display: none !important; }
   /* ---- views & tabs ---- */
@@ -184,6 +187,8 @@
   const $ = (id) => document.getElementById(id);
   const log = $("log"), orb = $("orb"), statusEl = $("status"), player = $("player");
   const params = new URLSearchParams(location.search);
+  const handoff = params.get("talk") === "1";   // opened by Siri ("switch to the app")
+  if (handoff && !params.get("token")) history.replaceState(null, "", location.pathname);
   let token = params.get("token") || safeGet("jarvis-token");
   if (params.get("token")) { safeSet("jarvis-token", token); history.replaceState(null, "", location.pathname); }
   if (!token) document.body.classList.add("needs-token");
@@ -351,6 +356,26 @@
       if (GOODBYE.test(data.heard)) return endConversation();
     } catch (e) { add("sys", "⚠ " + e.message); }
     listen();
+  }
+  // Carry on from Siri or Telegram: show the last few exchanges (the conversation itself
+  // continues on the server, so Jarvis remembers them too).
+  (async () => {
+    if (!token || log.children.length) return;
+    try {
+      const { turns } = await api("/api/recent");
+      if (!turns || !turns.length) return;
+      add("sys", "Earlier, with Siri:");
+      for (const t of turns.slice(-4)) { add("you", t.you); add("jarvis", t.jarvis); }
+    } catch {}
+  })();
+  // Siri handed over: one tap starts hands-free talking (iPhone needs a tap before it lets a page
+  // use the speaker), so cover the screen with a big tap target.
+  if (handoff && token) {
+    const cover = document.createElement("div");
+    cover.id = "handoff";
+    cover.innerHTML = "<div><b>Tap anywhere</b><br>to keep talking to Jarvis</div>";
+    document.body.appendChild(cover);
+    cover.onclick = () => { cover.remove(); document.getElementById("tabTalk")?.click(); startConversation(); };
   }
   // Opened the app again after it was closed mid-answer? Pick the answer up.
   (async () => {

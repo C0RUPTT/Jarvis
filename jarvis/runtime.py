@@ -32,10 +32,12 @@ class Runtime:
     awaiting: set = None           # Claude Code sessions we sent a message to and await a reply from
     siri_inbox: list = None        # things to speak in the ongoing Siri conversation
     last_siri: float = 0.0         # when the Siri Shortcut last talked to us
+    recent: list = None            # the last few exchanges, so the web app can pick up a Siri chat
 
     def __post_init__(self):
         self.awaiting = set()
         self.siri_inbox = []
+        self.recent = []
         self._awaiting_since: dict = {}
 
     def await_reply(self, session_id: str) -> None:
@@ -136,6 +138,7 @@ class Runtime:
         held = self.announcer.peek_held()
         if woke and held:
             reply += f" Also, good morning: {held} thing{'s' if held != 1 else ''} came in overnight. Ask me what you missed."
+        self.recent = (self.recent + [{"you": text, "jarvis": reply, "time": time.time()}])[-8:]
         return reply
 
     _LONG_START = re.compile(r"^(ok(ay)?,? |hey jarvis,? )?(i have a long (one|message|request|question)|"
