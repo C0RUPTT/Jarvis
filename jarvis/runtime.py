@@ -101,7 +101,10 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
         bot.on_text = rt.ask
         bot.transcribe = rt.transcribe
         bot.synthesize = lambda text: synthesize_mp3(text, config.online_voice)
+        from . import admin
+
         bot.commands = {
+            **admin.commands(config, jobs),
             "jobs": lambda: jobs.summary() if jobs else "No background jobs in this mode.",
             "stats": lambda: metrics.report(config.data_dir),
             "reset": lambda: (brain.reset(), "New conversation started.")[1],

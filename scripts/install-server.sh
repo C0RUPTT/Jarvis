@@ -19,7 +19,7 @@ DIR="$HOME/Jarvis"
 ENV_FILE="$DIR/.env"
 PORT=8765
 
-bold() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
+bold() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; tg_send "Jarvis setup: $*" 2>/dev/null || true; }
 ask()  { local prompt="$1" var; read -r -p "$prompt" var </dev/tty; printf '%s' "$var"; }
 env_get() { [ -f "$ENV_FILE" ] && grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
 env_set() {
