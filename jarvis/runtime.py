@@ -169,6 +169,9 @@ class Runtime:
         held = self.announcer.peek_held()
         if woke and held:
             reply += f" Also, good morning: {held} thing{'s' if held != 1 else ''} came in overnight. Ask me what you missed."
+        from .clock import exact_times
+
+        reply = exact_times(reply)
         self.recent = (self.recent + [{"you": text, "jarvis": reply, "time": time.time()}])[-8:]
         return reply
 

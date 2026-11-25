@@ -99,6 +99,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         except Exception as e:  # noqa: BLE001
             return f"Sorry, your earlier question \"{item['q'][:60]}\" failed: {e}"
 
+    recently_answered: list[tuple[float, str]] = []   # (time, question) of late answers just spoken
+
     def _take_finished() -> list[str]:
         """Late answers that are ready and not yet delivered, so they can be spoken in this turn."""
         with pending_lock:
@@ -106,6 +108,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             for p in ready:
                 p["delivered"] = True
             pending[:] = [p for p in pending if not p["delivered"]]
+        recently_answered[:] = [r for r in recently_answered if time.time() - r[0] < 120] + \
+            [(time.time(), p["q"]) for p in ready]
         return [_late_text(p) for p in ready]
 
     def _notify_if_unclaimed(item: dict) -> None:
@@ -118,6 +122,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 pending[:] = [p for p in pending if p is not item]
             announcer.announce(_late_text(item), reply=True)
         threading.Timer(HANDOFF_GRACE, later).start()
+
+    def _similar(a: str, b: str) -> bool:
+        import difflib
+
+        norm = lambda x: re.sub(r"[^a-z0-9 ]", "", x.lower()).strip()
+        return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio() > 0.75
 
     def ask_within_budget(text: str) -> str:
         """Siri gives up on slow requests, so always answer within the budget. A late answer is spoken
@@ -140,6 +150,23 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if rt.active_awaiting():
                 return "The session is still working on it. Ask me again in a moment."
             return "Still on it. Give me another moment." if waiting else "Nothing pending; ask away."
+
+        if earlier and any(_similar(q, text) for _, q in recently_answered):
+            return " ".join(earlier)   # the answer to this very question just arrived: don't ask twice
+        with pending_lock:   # asked again (Siri said "one moment" and you repeated yourself)?
+            same = [p for p in pending if not p["delivered"] and _similar(p["q"], text)]
+        if same:
+            item = same[0]
+            try:   # don't start a second answer to the same question: wait for the first one
+                item["future"].result(timeout=config.siri_budget)
+            except concurrent.futures.TimeoutError:
+                return " ".join(earlier + ["Still working on that one, sir. I'll tell you the moment it's ready."])
+            with pending_lock:
+                if item["delivered"]:
+                    return " ".join(earlier + ["I've just sent you that answer, sir."])
+                item["delivered"] = True
+                pending[:] = [p for p in pending if p is not item]
+            return " ".join(earlier + [item["future"].result()])
 
         future = pool.submit(rt.ask, text)
         try:

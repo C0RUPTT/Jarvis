@@ -106,10 +106,14 @@ class Announcer:
         cutoff = time.time() - max_age_hours * 3600
         with self._lock:
             items, self._unread = [i for i in self._unread if i[0] >= cutoff], []
+        items = _drop_repeats(items)
         return [f"At {datetime.fromtimestamp(t):%I:%M %p}".replace("At 0", "At ") + f": {text}" for t, text in items]
 
     def push(self, text: str, silent: bool = False, title: str = "Jarvis") -> bool:
         """Send a notification to the phone. Returns False if no channel is set up."""
+        from .clock import exact_times
+
+        text = exact_times(text)
         with self._lock:
             self._unread = (self._unread + [(time.time(), text)])[-20:]
         if self.telegram is not None:
@@ -197,3 +201,15 @@ class Announcer:
         with self._lock:
             event = {"id": next(self._ids), "time": time.time(), **event}
             self._events = (self._events + [event])[-50:]
+
+
+def _drop_repeats(items: list) -> list:
+    """Keep only the latest of near-identical notifications (e.g. two answers to the same question
+    asked twice), so reading them out doesn't repeat itself."""
+    import difflib
+
+    kept: list = []
+    for t, text in reversed(items):
+        if not any(difflib.SequenceMatcher(None, text[:300], k[1][:300]).ratio() > 0.55 for k in kept):
+            kept.append((t, text))
+    return list(reversed(kept))
