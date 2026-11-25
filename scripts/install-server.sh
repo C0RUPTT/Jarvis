@@ -100,9 +100,12 @@ mkdir -p "$HOME/jarvis-projects"
 
 bold "6/8 Tailscale (private link to your iPhone)"
 if ! command -v tailscale >/dev/null; then curl -fsSL https://tailscale.com/install.sh | sh; fi
+sudo tailscale set --accept-dns=false 2>/dev/null || true
 if ! tailscale status >/dev/null 2>&1; then
   echo "Sign in with the SAME Tailscale account as your iPhone. The link is also sent to your Telegram."
-  sudo .venv/bin/python scripts/relay_links.py tailscale up --hostname=jarvis
+  # --accept-dns=false: on Google Cloud, Tailscale DNS can block the server from reaching
+  # metadata.google.internal, which breaks the console SSH button.
+  sudo .venv/bin/python scripts/relay_links.py tailscale up --hostname=jarvis --accept-dns=false
 fi
 echo "ok"
 
