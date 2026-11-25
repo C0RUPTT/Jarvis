@@ -99,8 +99,19 @@ class Announcer:
             return True
         return False
 
+    _unread: list = []   # notifications sent to the phone but not yet read out (for "read my notifications")
+
+    def take_unread(self, max_age_hours: float = 24) -> list[str]:
+        """Notifications Jarvis sent that you haven't had read to you yet; marks them read."""
+        cutoff = time.time() - max_age_hours * 3600
+        with self._lock:
+            items, self._unread = [i for i in self._unread if i[0] >= cutoff], []
+        return [f"At {datetime.fromtimestamp(t):%I:%M %p}".replace("At 0", "At ") + f": {text}" for t, text in items]
+
     def push(self, text: str, silent: bool = False, title: str = "Jarvis") -> bool:
         """Send a notification to the phone. Returns False if no channel is set up."""
+        with self._lock:
+            self._unread = (self._unread + [(time.time(), text)])[-20:]
         if self.telegram is not None:
             return self.telegram.send(text, silent=silent)
         if self.ntfy_topic:

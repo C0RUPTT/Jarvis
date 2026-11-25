@@ -11,6 +11,9 @@ import re
 MAX_WORDS = 12
 
 _PATTERNS = [
+    ("read_unread", r"^(can you |please )?(read|tell) me (my |the )?(notifications|messages|alerts|texts)|"
+                    r"^(read|play) (my |the )?(notifications|messages|alerts)|^what did you (send|tell) me|"
+                    r"^(any|do i have any) (new )?(messages|notifications|alerts)"),
     ("claude_always", r"^(always|every time)?\s*(tell|let) me (know )?(every time|whenever|each time) claude( code)? (is done|finishes|is finished)|^always (tell|let) me (know )?when claude( code)? (is done|finishes|is finished)"),
     ("claude_once", r"^(please )?(tell|let) me (know )?when claude( code)?('s| is)? (done|finished|finishes)|^(ping|notify) me when claude( code)? (is done|finishes)"),
     ("claude_off", r"^(stop|don'?t) (telling|tell|notifying|notify) me (about|when) claude"),
@@ -58,9 +61,20 @@ def _normal(rt) -> str:
     return f"Back to normal. While you were away: " + " ".join(held)
 
 
+def _read_unread(rt) -> str:
+    items = rt.announcer.take_unread()
+    if not items:
+        return "Nothing new from me since you last checked, sir."
+    head = "One since you last checked. " if len(items) == 1 else f"{len(items)} since you last checked. "
+    return head + " ".join(items)
+
+
 def _missed(rt) -> str:
     held = rt.announcer.take_held()
     parts = []
+    unread = rt.announcer.take_unread()
+    if unread:
+        parts.append(f"Sent to your phone: " + " ".join(unread))
     if held:
         parts.append(f"{len(held)} thing{'s' if len(held) != 1 else ''} while you were away: " + " ".join(held))
     running = _running_jobs(rt)
@@ -143,5 +157,5 @@ def _claude_off(rt) -> str:
     return "Righto, no more Claude Code updates."
 
 
-_ACTIONS = {"claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
+_ACTIONS = {"read_unread": _read_unread, "claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
             "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}
