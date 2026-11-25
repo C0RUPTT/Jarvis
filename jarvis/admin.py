@@ -212,7 +212,8 @@ def shortcut(config, telegram=None) -> str:
     for label, url in links:
         telegram.send(label)
         telegram.send(url)
-    return "Those are your Shortcut links: long-press a link message, then Copy."
+    return ("Those are your Shortcut links: long-press a link message, then Copy. Full step-by-step "
+            "Shortcut (one loop that waits for slow answers): docs/SIRI_SHORTCUT.md in the Jarvis repo.")
 
 
 US_ZONES = {"eastern": "America/New_York", "central": "America/Chicago", "mountain": "America/Denver",

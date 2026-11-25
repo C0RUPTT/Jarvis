@@ -132,6 +132,13 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                     return
                 item["delivered"] = True
                 pending[:] = [p for p in pending if p is not item]
+            if not item.get("waits") and not wait_state.get("hinted_today") == time.strftime("%Y-%m-%d"):
+                wait_state["hinted_today"] = time.strftime("%Y-%m-%d")
+                print("[siri] the Shortcut never called the waiting step for a late answer")
+                announcer.announce(_late_text(item) + "\n\n(Siri didn't wait for this answer: the Shortcut's "
+                                   "waiting step isn't reaching Jarvis. See docs/SIRI_SHORTCUT.md, or send /shortcut.)",
+                                   reply=True)
+                return
             announcer.announce(_late_text(item), reply=True)
         threading.Timer(HANDOFF_GRACE, later).start()
 
@@ -180,11 +187,18 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 pending[:] = [p for p in pending if p is not item]
             return " ".join(earlier + [item["future"].result()])
 
-        future = pool.submit(rt.ask, text)
+        def siri_ask(t: str) -> str:
+            siri_waiting[0] += 1
+            try:
+                return rt.ask(t)
+            finally:
+                siri_waiting[0] -= 1
+
+        future = pool.submit(siri_ask, text)
         try:
             reply = future.result(timeout=config.siri_budget)
         except concurrent.futures.TimeoutError:
-            item = {"q": text, "future": future, "delivered": False}
+            item = {"q": text, "future": future, "delivered": False, "asked_at": time.time(), "waits": 0}
             with pending_lock:
                 pending.append(item)
             future.add_done_callback(lambda f: _notify_if_unclaimed(item))
@@ -220,6 +234,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     speech_jobs: dict[str, dict] = {}   # id -> sentence audio for a web-app answer (see /api/speech)
 
     web_turn = threading.Lock()
+    siri_waiting = [0]   # Siri requests waiting for Claude right now
 
     def _superseded(talk_id: str) -> bool:
         with talks_lock:
@@ -241,6 +256,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if rt.dictation is None and STANDBY.match(heard.strip()):   # "I'm done": no model call
             return {"heard": heard, "reply": "", "speech": "", "audio": None, "standby": True}
         with web_turn:   # one app message at a time, so a newer one can replace those still queued
+            for _ in range(600):   # a Siri request goes first: Siri can only wait a few seconds
+                if not siri_waiting[0]:
+                    break
+                time.sleep(0.1)
             if talk_id and _superseded(talk_id):   # you've already said something newer: skip this one
                 print(f"[web] skipped an older message: {heard!r}")
                 return {"heard": "", "reply": "", "speech": "", "audio": None}
@@ -454,6 +473,14 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         check(x_jarvis_token or token or payload.get("token"))
         rt.last_siri = wait_state["last"] = time.time()
         print("[siri] waiting for a late answer...")
+        with pending_lock:
+            open_items = [p for p in pending if not p["delivered"]]
+            for p in open_items:
+                p["waits"] = p.get("waits", 0) + 1
+        if open_items and all(time.time() - p.get("asked_at", time.time()) > 40 for p in open_items):
+            # Siri has waited long enough: let the conversation go on; the answer is sent to the
+            # phone (Telegram) the moment it's ready.
+            return {"say": "This one's taking a while, sir. I'll send it to your phone when it's ready. Anything else?"}
         # Shorter than a normal turn: this call comes right after Siri spoke "One moment", and
         # Siri gives up on a step that takes ~10 seconds.
         deadline = time.time() + min(config.siri_budget, 6)
