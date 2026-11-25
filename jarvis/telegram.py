@@ -111,6 +111,16 @@ class TelegramBot:
             except TypeError:       # command takes no argument
                 self.send(func())
             return
+        if command and command != "start":
+            # Unknown /command: never pass it to Claude (it may carry a key meant for a command
+            # this version doesn't have yet). Delete it if it had anything after the command.
+            deleted = " " in text and bool(msg.get("message_id"))
+            if deleted:
+                self._call("deleteMessage", {"chat_id": self.user_id, "message_id": msg["message_id"]})
+            self.send(f"I don't know /{command} yet; I may need updating. Send /update (or say "
+                      "'update yourself'), then try again."
+                      + (" I deleted your message in case it held a key." if deleted else ""))
+            return
         if command == "start":
             self.send("Jarvis online. Text me, or hold the mic button to talk.")
             return
