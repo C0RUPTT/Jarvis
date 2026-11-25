@@ -149,6 +149,19 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         norm = lambda x: re.sub(r"[^a-z0-9 ]", "", x.lower()).strip()
         return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio() > 0.75
 
+    def _voice_sized(reply: str, asked: str = "") -> str:
+        """Safety net for spoken answers: if one is still long (despite the instructions), speak
+        the first part and send the whole answer to the phone, instead of a minute-long monologue."""
+        from . import spoken
+
+        if re.search(r"\b(all of it|full list|everything|whole thing|read (it|them) all|every one)\b", asked, re.I):
+            return reply   # they asked for all of it
+        say, full = spoken.for_voice(reply, smart=False)
+        if full:
+            announcer.push_full(full)
+            return say
+        return reply
+
     def ask_within_budget(text: str) -> str:
         """Siri gives up on slow requests, so always answer within the budget. A late answer is spoken
         at the start of your next Siri turn, or sent to Telegram if the conversation has ended."""
@@ -278,9 +291,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         # Voice, sentence by sentence: the first sentence is short, so its audio is ready almost at
         # once and Jarvis starts talking while the rest is still being generated (all in parallel,
         # starting now, before the phone even asks).
-        parts = _speech_parts(clean_for_speech(reply)) if config.online_voice else []
+        spoken_reply = _voice_sized(reply, heard)
+        parts = _speech_parts(clean_for_speech(spoken_reply)) if config.online_voice else []
         speech_id = _start_speech(parts) if parts else ""
-        return {"heard": heard, "reply": reply, "speech": clean_for_speech(reply), "audio": None,
+        return {"heard": heard, "reply": reply, "speech": clean_for_speech(spoken_reply), "audio": None,
                 "speech_id": speech_id, "speech_parts": parts}
 
     def _speech_parts(text: str) -> list[str]:
@@ -442,7 +456,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             started = time.monotonic()
             announcer.begin_capture()
             try:
-                reply = clean_for_speech(ask_within_budget(text))
+                reply = clean_for_speech(_voice_sized(ask_within_budget(text), text))
             finally:
                 actions = announcer.end_capture()
             metrics.record("siri", time.monotonic() - started, late=reply == STILL_WORKING)

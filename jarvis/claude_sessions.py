@@ -64,7 +64,7 @@ def seen(data_dir: Path, label: str, session: str, summary: str) -> None:
     elif old and old.get("named"):
         label = old["project"]          # a name the user gave it ("Jarvis") wins over the folder name
     items = [s for s in load(data_dir) if s["id"] != sid]
-    entry = {"id": sid, "project": label, "last_seen": time.time(), "last_summary": summary[:1500]}
+    entry = {"id": sid, "project": label, "last_seen": time.time(), "last_summary": summary[:4000]}
     if old and old.get("named"):
         entry["named"] = True
     items.insert(0, entry)

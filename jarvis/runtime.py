@@ -76,13 +76,15 @@ class Runtime:
         that come later are still delivered; see claude_code_finished.)"""
         return {sid for sid in self.awaiting if time.time() - self._awaiting_since.get(sid, 0) <= 600}
 
-    def deliver(self, text: str, urgent: bool = True) -> None:
+    def deliver(self, text: str, urgent: bool = True, full: str | None = None) -> None:
         """Tell the user something now. If a Siri conversation is going on, it's spoken there on the
         next turn (an open Siri conversation blocks spoken notifications); otherwise, or if no Siri
         turn picks it up within 25 seconds, it's announced as usual."""
         if time.time() - self.last_siri > 90:
-            self.announcer.announce(text, urgent=urgent)
+            self.announcer.announce(text, urgent=urgent, full=full)
             return
+        if full:
+            self.announcer.push_full(full)
         item = [text]
         self.siri_inbox.append(item)
 
@@ -114,7 +116,7 @@ class Runtime:
             self._awaiting_since.pop(sid, None)
             self._save_awaiting()
             name = claude_sessions.name_of(self.config.data_dir, sid) or label or "Claude Code"
-            self.deliver(f"Your {name} session says: {claude_sessions.trim(summary, 600) or 'done.'}")
+            self._deliver_long(f"Your {name} session says:", summary or "done.", context=f"From the user's {name} session.")
             return "delivered reply"
         if self.claude_watch == "off":
             return "ignored (announcements off)"
@@ -122,14 +124,23 @@ class Runtime:
         if self.claude_watch == "always" and 0 <= seconds < min_seconds:
             return "ignored (quick reply)"
         where = f" on {label}" if label else ""
-        text = f"Claude Code is done{where}."
-        if summary:
-            text += f" {claude_sessions.trim(summary, 400)}"
         # Announcements you asked for always get through, with sound.
-        self.deliver(text, urgent=True)
+        self._deliver_long(f"Claude Code is done{where}.", summary, context=f"A Claude Code session{where} finished.")
         if self.claude_watch == "once":
             self.set_claude_watch(self._watch_default())
         return "announced"
+
+    def _deliver_long(self, intro: str, body: str, context: str = "") -> None:
+        """Speak a short version of a long reply and send the whole thing to the phone, never cut
+        off. Summarising takes a few seconds, so it runs in the background."""
+        from . import spoken
+
+        def run():
+            say, full = spoken.for_voice(body, context=context) if body else ("", None)
+            self.deliver(f"{intro} {say}".strip(), urgent=True, full=f"{intro}\n\n{full}" if full else None)
+        import threading
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _watch_default(self) -> str:
         path = self.config.data_dir / "claude-watch"

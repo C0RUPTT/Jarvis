@@ -49,12 +49,16 @@ def worked_seconds(transcript: str) -> int:
     return -1   # unknown
 
 
-body = json.dumps({
+fields = {
     "label": os.path.basename(project_dir),
-    "summary": (event.get("last_assistant_message") or "")[:1500],
+    "summary": event.get("last_assistant_message") or "",
     "seconds": worked_seconds(event.get("transcript_path") or ""),
     "session": os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID") or "",   # cloud sessions only
-}).encode()
+}
+body = json.dumps(fields).encode()
+while len(body) > 3900:   # ntfy turns anything over 4096 bytes into a file attachment
+    fields["summary"] = fields["summary"][:int(len(fields["summary"]) * 0.9)]
+    body = json.dumps(fields).encode()
 try:
     urllib.request.urlopen(urllib.request.Request(url, data=body, method="POST"), timeout=5).close()
 except Exception:

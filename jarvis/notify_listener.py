@@ -55,7 +55,7 @@ def start(topic: str, on_done, data_dir=None) -> None:
                         except json.JSONDecodeError:
                             data = {"summary": event.get("message", "")}
                         if not data.get("stop_hook_active"):
-                            on_done(str(data.get("label", ""))[:60], str(data.get("summary", ""))[:1500],
+                            on_done(str(data.get("label", ""))[:60], str(data.get("summary", ""))[:4000],
                                     int(data.get("seconds", -1) or -1), str(data.get("session", ""))[:80])
             except Exception as e:  # noqa: BLE001 - network blips: reconnect quietly
                 STATUS["connected_since"] = 0.0

@@ -36,10 +36,24 @@ class Announcer:
 
     # -- what tools and jobs call ------------------------------------------------
 
-    def announce(self, text: str, urgent: bool = False, quiet: bool = False, reply: bool = False) -> None:
+    def announce(self, text: str, urgent: bool = False, quiet: bool = False, reply: bool = False,
+                 full: str | None = None) -> None:
         """Say something unprompted, e.g. a timer going off or a job finishing.
         reply=True: the answer to something the user just asked, so it's never held (only made
-        silent at night or in quiet/hold mode)."""
+        silent at night or in quiet/hold mode).
+        full: the complete text when `text` is a short spoken version: it follows as a second,
+        silent message, so nothing is ever cut off."""
+        if full:
+            self._announce(text, urgent, quiet, reply)
+            self.push_full(full)
+            return
+        self._announce(text, urgent, quiet, reply)
+
+    def push_full(self, full: str) -> None:
+        """The complete text, silently (it's for reading, not for interrupting)."""
+        self.push("Full version:\n\n" + full, silent=True)
+
+    def _announce(self, text: str, urgent: bool = False, quiet: bool = False, reply: bool = False) -> None:
         if reply and not urgent:
             silent = quiet or self.night or self.mode != "normal"
             self._add({"type": "say", "text": text, "silent": silent})
