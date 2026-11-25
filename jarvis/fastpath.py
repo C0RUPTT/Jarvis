@@ -11,6 +11,7 @@ import re
 MAX_WORDS = 9
 
 _PATTERNS = [
+    ("morning", r"^(hey |hi |ok(ay)? )?(good )?morning( jarvis)?$|^i'?m (up|awake)( now)?$|^(start|begin) my day$"),
     ("hold", r"^(please )?(hold (everything|it all|all|my (messages|notifications|stuff))|"
              r"don'?t (bother|disturb|interrupt) me|do not disturb|hold (on to )?everything)"),
     ("quiet", r"^(please )?(tell me quietly|quiet mode|go quiet|(be )?silent( mode)?|"
@@ -97,4 +98,8 @@ def _running_jobs(rt) -> str:
     return " ".join(lines)
 
 
-_ACTIONS = {"hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}
+def _morning(rt) -> str:
+    return rt.morning()
+
+
+_ACTIONS = {"morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs}

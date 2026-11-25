@@ -50,13 +50,45 @@ class Runtime:
         return reply
 
     def morning(self) -> str:
-        """Called by the phone's wake-up automation (alarm stopped / Sleep Focus off)."""
+        """'Good morning, Jarvis' (or the wake-up automation): ends night mode and gives the rundown:
+        what came in overnight, background jobs, and today's calendar."""
         self.announcer.wake()
+        parts = [f"Good morning, {self.config.user_name}."]
         held = self.announcer.take_held()
-        greeting = f"Good morning, {self.config.user_name}."
-        if not held:
-            return greeting + " Nothing came in overnight."
-        return f"{greeting} Overnight: " + " ".join(held)
+        parts.append(("Overnight: " + " ".join(held)) if held else "Nothing came in overnight.")
+        parts.append(self._today_calendar())
+        from . import fastpath
+
+        running = fastpath._running_jobs(self)
+        if running:
+            parts.append(running)
+        return " ".join(p for p in parts if p)
+
+    def _today_calendar(self) -> str:
+        import os
+
+        if not os.getenv("JARVIS_ICLOUD_USER"):
+            return ""
+        try:
+            from .tools.calendar import calendar_events
+
+            events = calendar_events(self.ctx)
+        except Exception as e:  # noqa: BLE001 - the rundown should never fail because of the calendar
+            return f"I couldn't reach your calendar ({e})."
+        if events.startswith("Nothing"):
+            return "Your calendar is clear today."
+        lines = events.splitlines()[1:]
+        items = "; ".join(line.split(": ", 1)[-1].split(" [")[0] if ": " in line else line for line in lines[:5])
+        times = [line.split(": ", 1)[0].split(" ")[-1] for line in lines[:5]]
+        def say_time(t: str) -> str:
+            return t.split("-")[0].lstrip("0")   # "09:30-10:00" -> "9:30"
+
+        spoken = "; ".join(
+            (f"{say_time(t)} {i}" if t[:1].isdigit() else i).replace(" @ ", " at ")
+            for t, i in zip(times, items.split("; "))
+        )
+        more = f", and {len(lines) - 5} more" if len(lines) > 5 else ""
+        return f"Today you have {len(lines)} thing{'s' if len(lines) != 1 else ''}: {spoken}{more}."
 
     def close(self) -> None:
         self.brain.close()
