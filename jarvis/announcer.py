@@ -74,7 +74,18 @@ class Announcer:
             self._capture.append({"type": "open", "url": url, "text": label})
             return
         self._add({"type": "open", "url": url, "text": label})
+        self._last_open = {"url": url, "text": label, "time": time.time()}
         self.push(f"{label}\n{url}")
+
+    _last_open: dict | None = None
+
+    def take_recent_open(self, max_age: float = 120) -> str:
+        """A link that came from a late answer (so it only went to Telegram); open it on the next
+        Siri turn if it's recent."""
+        item, self._last_open = self._last_open, None
+        if item and time.time() - item["time"] <= max_age:
+            return item["url"]
+        return ""
 
     def phone_action(self, kind: str, fallback: str, **data) -> bool:
         """A native phone action (timer, alarm). Returns False if no Siri request can take it,

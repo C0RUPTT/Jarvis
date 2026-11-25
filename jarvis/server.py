@@ -163,8 +163,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             # Only include "open" when there is a link: Shortcuts counts an empty string as
             # "has any value" and would try to open it.
             result = {"say": reply}
+            late_link = announcer.take_recent_open()
             if opens:
                 result["open"] = opens[-1]["url"]
+            elif late_link:
+                result["open"] = late_link
             for extra in opens[:-1]:   # only one link can open at a time; send the rest to Telegram
                 announcer.push(f"{extra['text']}\n{extra['url']}")
             print(f"JARVIS: {result}")

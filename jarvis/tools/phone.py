@@ -26,12 +26,22 @@ def notify_phone(ctx, message: str, title: str = "Jarvis"):
 
 @tool(
     "open_on_phone",
-    "Open an app or link on the user's iPhone. Works with any URL, including app links: "
-    "'maps://?daddr=<address>&dirflg=d' (start driving directions), 'tel:<number>' (call), 'sms:<number>&body=<text>' (text), "
-    "'music://', 'spotify:search:<query>', 'youtube://results?search_query=<q>' or a YouTube video URL, "
-    "'shortcuts://run-shortcut?name=<name>&input=text&text=<text>' "
-    "(run any iPhone Shortcut, which can set alarms, add calendar events, control the home, etc.), "
-    "'mailto:', 'https://...'. For Shortcuts, prefer run_phone_shortcut.",
+    "Open an app or link on the user's iPhone. Use the right link format, or it only opens the app:\n"
+    "- Navigation, Apple Maps: maps://?daddr=<address>&dirflg=d\n"
+    "- Navigation, Waze (if the user mentions Waze or prefers it): https://waze.com/ul?q=<address>&navigate=yes\n"
+    "- Navigation, Google Maps: comgooglemaps://?daddr=<address>&directionsmode=driving\n"
+    "- PLAY a YouTube video: first find a specific video with web search, then open its "
+    "https://www.youtube.com/watch?v=<id> link (that plays it). Only fall back to "
+    "youtube://results?search_query=<q> if you truly can't find one.\n"
+    "- Music: spotify:search:<query>, or a specific open.spotify.com track/playlist link (found via "
+    "web search) to play it; Apple Music: a music.apple.com link.\n"
+    "- Settings pages: App-prefs:WIFI, App-prefs:Bluetooth, App-prefs:BATTERY_USAGE, "
+    "App-prefs:NOTIFICATIONS_ID, App-prefs:General, App-prefs:Privacy (NOT app-settings:, which "
+    "opens an app's own settings).\n"
+    "- Calls / texts / email: tel:<number>, sms:<number>&body=<text>, mailto:<address>\n"
+    "- Any app: its URL scheme (e.g. spotify://, instagram://, whatsapp://) or its https:// link.\n"
+    "- The user's own Shortcuts: prefer run_phone_shortcut.\n"
+    "Addresses and queries are URL-encoded automatically.",
     {
         "url": {"type": "string"},
         "label": {"type": "string", "description": "What this does, shown to the user"},
