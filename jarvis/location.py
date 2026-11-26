@@ -56,3 +56,21 @@ def request(timeout: float = 25, announcer=None) -> dict | None:
         if _latest and _latest["time"] >= now:
             return dict(_latest)
     return None
+
+
+last_denied = 0.0   # when the web app last reported that location permission was refused
+
+
+def missing_help(siri_recent: bool) -> str:
+    """Why no location arrived, as plainly as we can tell, with the fix."""
+    import time as _t
+
+    if _t.time() - last_denied < 300:
+        return ("The web app isn't allowed to use the location. Fix: Settings > Apps > Safari > Location > "
+                "Ask Next Time or Allow (or Settings > Privacy & Security > Location Services > Safari Websites).")
+    if siri_recent:
+        return ("Siri's Shortcut doesn't send the location yet: it needs the one-time location step. "
+                "Send /locationsetup in Telegram for the steps.")
+    return ("The phone didn't send its location. In the web app: allow location when asked. With Siri: "
+            "send /locationsetup in Telegram for the one-time Shortcut step. Or share it in Telegram "
+            "(paperclip > Location).")

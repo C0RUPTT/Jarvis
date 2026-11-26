@@ -6,6 +6,7 @@
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
+    /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
     /shortcut the exact links to paste into the iPhone Shortcuts
@@ -363,6 +364,29 @@ TELEGRAM: tap the paperclip > Location > Send My Current Location, then ask.
 Test: "How long will it take me to get to Homewood?" Jarvis gives drive time and distance (no live traffic) and offers Waze."""
 
 
+CALL_SETUP = """Calling by name ("Jarvis, call Khloee"). Your contacts stay on your phone: Jarvis only sends the name to a Shortcut on the phone, which looks it up and dials.
+
+Make a new Shortcut named exactly:  Jarvis Call
+(Jarvis passes it the name; inside the Shortcut that's the blue "Shortcut Input" variable.)
+1. Add "Find Contacts": Find All Contacts where  Name  contains  Shortcut Input.
+2. Add "Count": Count  Items  in  Contacts.
+3. Add "If":  Count  is  0
+     inside: "Speak Text":  I couldn't find Shortcut Input in your contacts, sir.
+             then "Stop This Shortcut"
+   End If   (delete the Otherwise if one appears)
+4. Add "If":  Count  is  1
+     inside: "Call":  Contacts
+   Otherwise:
+     "Choose from List":  Contacts   (asks you which one)
+     "Call":  Chosen Item
+   End If
+   (If that person has several numbers, iPhone asks which one.)
+
+The first time, iPhone asks to let Jarvis Call use your Contacts: tap Allow.
+iPhone may also show "Call ...?": tap Call. That confirmation is Apple's rule and can't be skipped.
+Test it: run Jarvis Call by itself, type a name. Then say "Jarvis, call <name>"."""
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
@@ -370,6 +394,7 @@ def commands(config, jobs, brain=None) -> dict:
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
+        "callsetup": lambda: CALL_SETUP,
         "siri": lambda: __import__("jarvis.siritrace", fromlist=["x"]).report(),
         "stats": lambda arg="": __import__("jarvis.metrics", fromlist=["x"]).report(
             config.data_dir, (float(arg) / 24) if arg.replace(".", "", 1).isdigit() else 3),

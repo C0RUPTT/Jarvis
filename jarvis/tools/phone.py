@@ -94,3 +94,26 @@ def open_jarvis_app(ctx):
         return "The phone link isn't available in this mode."
     rt.announcer.open_on_phone(app_link(rt), "Jarvis")
     return "Opening the Jarvis app on the phone. Tell the user to tap the screen once to keep talking."
+
+
+CALL_SHORTCUT = "Jarvis Call"
+
+
+@tool(
+    "call_contact",
+    "Call someone from the user's iPhone Contacts by name ('call Khloee', 'ring mum'). The phone looks "
+    "the name up itself (contacts stay on the phone), asks which one on screen if there are several "
+    "matches or numbers, says so if there's no match, then starts the call. Confirm in a few words "
+    "('Calling Khloee.'). For a number the user says aloud, use open_on_phone with tel: instead.",
+    {"name": {"type": "string", "description": "The person's name as the user said it"}},
+    ["name"],
+)
+def call_contact(ctx, name: str):
+    name = name.strip()
+    if not name:
+        return "Ask who to call."
+    url = f"shortcuts://run-shortcut?name={quote(CALL_SHORTCUT)}&input=text&text={quote(name)}"
+    open_on_phone(ctx, url, f"Call {name}")
+    return (f"The phone is running the '{CALL_SHORTCUT}' Shortcut for '{name}'. Say e.g. 'Calling {name}.' "
+            f"If they say nothing happened, the Shortcut isn't set up yet: tell them to send /callsetup "
+            f"in Telegram for the steps (about two minutes).")

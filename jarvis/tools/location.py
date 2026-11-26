@@ -23,6 +23,17 @@ def _here(ctx) -> dict | None:
     return location.fresh() or location.request(timeout=25, announcer=rt.announcer if rt else None)
 
 
+def _no_location(ctx) -> str:
+    import time as _t
+
+    from .. import location
+
+    rt = ctx.extras.get("runtime")
+    siri = rt is not None and _t.time() - getattr(rt, "last_siri", 0) < 60
+    return ("No location from the phone. Tell the user why in one short sentence, ask where they're "
+            "starting from, and mention the fix: " + location.missing_help(siri))
+
+
 def geocode(place: str, near: dict | None = None) -> dict | None:
     params = {"q": place, "format": "json", "limit": 1}
     if near:   # prefer the match nearest to the user ("Homewood" near you, not across the country)
@@ -55,8 +66,7 @@ def drive(a: dict, b: dict) -> dict | None:
 def get_my_location(ctx):
     here = _here(ctx)
     if not here:
-        return ("Couldn't get the phone's location. Ask where they're starting from, or tell them to "
-                "share their location in Telegram (paperclip, Location).")
+        return _no_location(ctx)
     try:
         place = _get("https://nominatim.openstreetmap.org/reverse?" + urllib.parse.urlencode(
             {"lat": here["lat"], "lon": here["lon"], "format": "json", "zoom": 16})).get("display_name", "")
@@ -81,8 +91,7 @@ def travel_time(ctx, destination: str, origin: str = ""):
     try:
         start = geocode(origin) if origin else _here(ctx)
         if not start:
-            return ("No starting point: the phone's location didn't arrive (or isn't set up). Say so in a "
-                    "few words and ask where they're starting from.")
+            return _no_location(ctx)
         end = geocode(destination, near=start)
         if not end:
             return f"Couldn't find '{destination}' on the map. Ask them to say it differently or give the address."
