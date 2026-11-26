@@ -93,25 +93,51 @@ def report_update(announce) -> None:
 
 
 def _upstream() -> str:
-    return _run(["git", "rev-parse", "@{u}"], timeout=10)[1].strip()
+    branch = _branch()
+    ref = f"origin/{branch}" if branch and branch != "HEAD" else "@{u}"
+    return _run(["git", "rev-parse", ref], timeout=10)[1].strip()
 
 
 def update_available() -> bool:
-    code, _ = _run(["git", "fetch", "-q", "origin"], timeout=60)
+    branch = _branch()
+    code, _ = _run(["git", "fetch", "-q", "origin", branch] if branch and branch != "HEAD" else
+                   ["git", "fetch", "-q", "origin"], timeout=60)
     if code != 0:
         return False
-    code, out = _run(["git", "rev-list", "--count", "HEAD..@{u}"], timeout=10)
+    target = f"origin/{branch}" if branch and branch != "HEAD" else "@{u}"
+    code, out = _run(["git", "rev-list", "--count", f"HEAD..{target}"], timeout=10)
     if not (code == 0 and out.strip().isdigit() and int(out.strip()) > 0):
         return False
     # Don't retry a version that already failed its checks; wait for a newer one.
     return not (FAILED_FILE.exists() and FAILED_FILE.read_text().strip() == _upstream())
 
 
+def _branch() -> str:
+    _, out = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    return out.strip()
+
+
+def _pull() -> tuple[int, str]:
+    """Fetch this branch and fast-forward to it, by name. (A plain `git pull` depends on the branch's
+    tracking settings, and failed with 'Cannot fast-forward to multiple branches' when those got
+    doubled.) Also repairs the tracking setting."""
+    branch = _branch()
+    if not branch or branch == "HEAD":
+        return _run(["git", "pull", "--ff-only"], timeout=120)
+    _run(["git", "config", "--unset-all", f"branch.{branch}.merge"], timeout=10)
+    _run(["git", "config", f"branch.{branch}.remote", "origin"], timeout=10)
+    _run(["git", "config", f"branch.{branch}.merge", f"refs/heads/{branch}"], timeout=10)
+    code, out = _run(["git", "fetch", "origin", branch], timeout=120)
+    if code != 0:
+        return code, out
+    return _run(["git", "merge", "--ff-only", f"origin/{branch}"], timeout=60)
+
+
 def update() -> str:
     """Pull the latest code, install packages, check it imports cleanly, then restart.
     If the new code is broken, roll back to the previous version and say so."""
     before = _head()
-    code, out = _run(["git", "pull", "--ff-only"], timeout=120)
+    code, out = _pull()
     if code != 0:
         return f"Update failed at git pull:\n{out[-800:]}"
     if "Already up to date" in out:
