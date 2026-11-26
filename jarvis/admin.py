@@ -6,6 +6,7 @@
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
+    /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
     /shortcut the exact links to paste into the iPhone Shortcuts
     /timezone set your time zone, e.g. /timezone America/New_York
@@ -340,12 +341,35 @@ def set_city(arg: str = "") -> str:
     return f"Got it. Your morning briefing will include the weather for {arg.strip()}."
 
 
+LOCATION_SETUP = """Location for route questions (only sent when you ask something like "how long to Homewood?").
+
+WEB APP: nothing to set up. The first time, iPhone asks to use your location: tap Allow.
+(If you tapped Don't Allow: Settings > Apps > Safari > Location > Ask or Allow.)
+
+SIRI SHORTCUT: one change, in the Otherwise part of "If Mode is ask" (the waiting part):
+1. Tap your "Get Contents of URL" with the wait link, then the down arrow > Show More:
+   Request Body: JSON. Add two Text fields:
+   key: lat   value: Current Location > Latitude
+   key: lon   value: Current Location > Longitude
+2. Above it (after Speak Text), add "Get Dictionary Value": key  location  in  Response.
+3. Above the "Get Contents of URL", add: If (Dictionary Value) has any value
+   inside it: "Get Current Location"   (leave Otherwise empty), End If.
+   In step 1, pick Latitude/Longitude from that Current Location.
+The first time, iPhone asks to let Jarvis use your location: tap Always Allow.
+(Settings > Privacy & Security > Location Services > Shortcuts: While Using the App.)
+
+TELEGRAM: tap the paperclip > Location > Send My Current Location, then ask.
+
+Test: "How long will it take me to get to Homewood?" Jarvis gives drive time and distance (no live traffic) and offers Waze."""
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
         "update": update,
         "restart": lambda: (_restart_soon(), "Restarting; back in about 10 seconds.")[1],
         "logs": logs,
+        "locationsetup": lambda: LOCATION_SETUP,
         "siri": lambda: __import__("jarvis.siritrace", fromlist=["x"]).report(),
         "stats": lambda arg="": __import__("jarvis.metrics", fromlist=["x"]).report(
             config.data_dir, (float(arg) / 24) if arg.replace(".", "", 1).isdigit() else 3),

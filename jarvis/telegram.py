@@ -107,6 +107,12 @@ class TelegramBot:
             return
 
         started = time.monotonic()
+        if msg.get("location"):   # shared with paperclip > Location: used for route questions
+            from . import location
+
+            location.set_location(msg["location"]["latitude"], msg["location"]["longitude"], "Telegram")
+            self.send("Got your location, sir. Ask away.", silent=True)
+            return
         voice = msg.get("voice") or msg.get("audio")
         if voice:
             self.typing()

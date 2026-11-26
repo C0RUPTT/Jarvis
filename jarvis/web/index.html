@@ -937,6 +937,14 @@
         if (ev.type === "say") {
           add("jarvis", ev.text);
           announcements.push(ev.text);
+        } else if (ev.type === "location_request") {   // Jarvis needs it for a route question (only then)
+          if (Date.now() / 1000 - ev.time < 30 && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => api("/api/location", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude, source: "web app" }) }).catch(() => {}),
+              (err) => diag("location-denied", { code: err.code }),
+              { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 });
+          }
         } else if (ev.type === "open") {
           add("jarvis", ev.text, ev.url);
           if (Date.now() / 1000 - ev.time < 30) openApp(ev.url);   // only fresh requests, once

@@ -568,6 +568,10 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             # quick "One moment" / "Sent to your session": a longer chain makes Siri give up.
             if reply == clean_for_speech(STILL_WORKING) or (reply.startswith("Sent to your") and rt.active_awaiting()):
                 result["wait"] = "yes"
+                from . import location
+
+                if location.wanted():
+                    result["location"] = "yes"   # the Shortcut sends the phone's location with its wait call
             late_link = announcer.take_recent_open()
             if opens:
                 result["open"] = opens[-1]["url"]
@@ -600,6 +604,14 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         payload = payload or {}
         check(x_jarvis_token or token or payload.get("token"))
         siritrace.record("wait", "Shortcut called the waiting step")
+        if payload.get("lat") not in (None, "") and payload.get("lon") not in (None, ""):
+            try:
+                from . import location
+
+                location.set_location(_coord(payload["lat"]), _coord(payload["lon"]), "Siri Shortcut")
+                siritrace.record("location", "phone sent its location")
+            except ValueError:
+                pass
         wait_started = time.monotonic()
         rt.last_siri = wait_state["last"] = time.time()
         print("[siri] waiting for a late answer...")
@@ -770,6 +782,23 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         if talking:
             announcer.web_talking_until = time.time() + 15
         return {"events": announcer.events_since(after)}
+
+    def _coord(v) -> float:
+        """A coordinate from Shortcuts ('47,6062' in some regions, or '47.6062 °')."""
+        return float(str(v).replace(",", ".").replace("°", "").strip())
+
+    @app.post("/api/location")
+    def phone_location(payload: dict = Body(...), x_jarvis_token: str | None = Header(None),
+                       token: str | None = Query(None)):
+        """The phone's location, sent because Jarvis asked for it (web app or a Shortcut)."""
+        check(x_jarvis_token or token or payload.get("token"))
+        from . import location
+
+        try:
+            location.set_location(_coord(payload["lat"]), _coord(payload["lon"]), str(payload.get("source", "phone"))[:30])
+        except (KeyError, ValueError):
+            raise HTTPException(status_code=400, detail="Need lat and lon")
+        return {"ok": True}
 
     @app.post("/api/diag")
     def diag(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
