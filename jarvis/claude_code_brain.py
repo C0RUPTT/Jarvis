@@ -23,7 +23,9 @@ from typing import Callable
 from . import mcp_bridge, metrics, tools
 from .persona import build_persona
 
-TURN_TIMEOUT = 600  # seconds; long tasks (coding, research) can take a while
+TURN_TIMEOUT = 150  # seconds of silence from Claude before a stuck conversation turn is stopped (big
+                   # work runs as background jobs, so a talker turn going this quiet is stuck; until it's
+                   # stopped, every later question waits behind it)
 MCP_PORT_OFFSET = 1  # MCP bridge listens on JARVIS_PORT + 1
 
 

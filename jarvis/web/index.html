@@ -354,7 +354,8 @@
     const voices = speechSynthesis.getVoices();
     u.voice = voices.find(v => /Daniel|Arthur|en-GB/i.test(v.name + v.lang)) || null;
     let called = false;
-    const finish = () => { if (!called) { called = true; done(); } };
+    localSpeaking = true;
+    const finish = () => { if (!called) { called = true; localSpeaking = false; done(); } };
     u.onend = u.onerror = finish;
     setTimeout(finish, 4000 + text.length * 90);   // iPhone sometimes never reports the end
     speechSynthesis.speak(u);
@@ -397,6 +398,7 @@
   }
   function stopBargeWatch() { clearInterval(bargeTimer); bargeTimer = null; }
 
+  let localSpeaking = false;
   function stopSpeaking() {
     stopBargeWatch();
     speechRun++;
@@ -560,6 +562,14 @@
       savePending(id);
       let early = null;
       const data = await collect(id, (sid) => { setState("speaking"); early = speak({ speech_id: sid }); });
+      if (data && data.slow) {   // the answer comes later: spoken when it's ready, and sent to the phone
+        const line = "This one's taking a while, sir. I'll tell you when it's ready.";
+        let voice = {};
+        try { voice = await api("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: line }) }); } catch {}
+        await reply({ reply: line, speech: line, ...voice });
+        return listen();
+      }
       if (!data || !data.heard) { if (early) await early; return listen(); }
       add("you", data.heard);
       await reply(data, early);
@@ -571,15 +581,18 @@
 
   // Speaking and listening never overlap. Whatever asks to listen (a finished turn, coming back to
   // the app, the watchdog), it waits until Jarvis's voice has actually stopped.
+  // Only what Jarvis is really saying counts: iPhone can report its built-in voice as "speaking"
+  // forever after the silent unlock at the first tap, which kept the app from ever listening.
   function jarvisTalking() {
     const playing = !player.paused && !player.ended && player.currentTime > 0;
-    return playing || ("speechSynthesis" in window && speechSynthesis.speaking) || announcing;
+    return playing || localSpeaking || announcing;
   }
   let listenWhenQuiet = null;
   function listenAfterSpeech() {
     if (listenWhenQuiet) return;
+    const since = Date.now();
     listenWhenQuiet = setInterval(() => {
-      if (jarvisTalking()) return;
+      if (jarvisTalking() && Date.now() - since < 30000) return;   // (never wait forever)
       clearInterval(listenWhenQuiet); listenWhenQuiet = null;
       setTimeout(() => { if (!jarvisTalking()) listen(); }, 350);   // let iPhone hand the mic back
     }, 200);
@@ -654,7 +667,12 @@
   // onSpeech(speechId): called once, as soon as the first sentence of the answer exists, so Jarvis
   // starts talking while Claude is still writing the rest.
   async function collect(id, onSpeech) {
+    const began = Date.now();
     for (let i = 0; i < 400; i++) {                     // up to ~7 minutes
+      if (onSpeech && Date.now() - began > 45000) {     // nothing to say after 45 s: don't sit there thinking
+        diag("answer-slow", { id }); savePending(null);
+        return { slow: true };
+      }
       if (document.visibilityState === "visible") {
         try {
           const asked = performance.now();
@@ -680,6 +698,14 @@
       savePending(id);
       let early = null;
       const data = await collect(id, (sid) => { setState("speaking"); early = speak({ speech_id: sid }); });
+      if (data && data.slow) {   // the answer comes later: spoken when it's ready, and sent to the phone
+        const line = "This one's taking a while, sir. I'll tell you when it's ready.";
+        let voice = {};
+        try { voice = await api("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: line }) }); } catch {}
+        await reply({ reply: line, speech: line, ...voice });
+        return listen();
+      }
       if (!data || !data.heard) { if (early) await early; return listen(); }
       add("you", data.heard);
       await reply(data, early);

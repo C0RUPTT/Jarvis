@@ -449,7 +449,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 item["fetched"] = True
             if result.get("reply"):
                 announcer.announce(f"You asked: \"{result.get('heard', '')[:80]}\"\n{result['reply']}", reply=True)
-        threading.Timer(45, unclaimed).start()
+        with talks_lock:
+            handed_off = bool(talks.get(talk_id, {}).get("handed_off"))
+        threading.Timer(1 if handed_off else 45, unclaimed).start()   # handed off: the app is waiting to be told
 
     @app.post("/api/talk")
     def talk(audio: UploadFile = File(...), x_jarvis_token: str | None = Header(None),
@@ -773,6 +775,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     def diag(payload: dict = Body(default={}), x_jarvis_token: str | None = Header(None)):
         """Microphone diagnostics from the web app (levels, recognition errors), printed for /logs."""
         check(x_jarvis_token)
+        if payload.get("event") == "answer-slow" and payload.get("id"):
+            with talks_lock:   # the app stopped waiting: announce the answer the moment it's ready
+                if payload["id"] in talks:
+                    talks[payload["id"]]["handed_off"] = True
+            print(f"[web] answer taking long; will announce it when ready ({payload['id']})")
+            return {"ok": True}
         if payload.get("event") == "timing" and isinstance(payload.get("e2e"), (int, float)):
             metrics.record("web_e2e", float(payload["e2e"]))   # you stop talking -> Jarvis starts talking
             return {"ok": True}
