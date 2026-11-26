@@ -47,3 +47,24 @@ def job_status(ctx):
 )
 def cancel_job(ctx, job_id: int):
     return _runner(ctx).cancel(job_id)
+
+
+@tool(
+    "read_job_result",
+    "Read the FULL result of a background job (job_status only shows a short preview). Speak the part "
+    "the user asked about or two or three key points; set send_to_phone to also send the complete "
+    "text to their phone (do that when it's long or they ask for it).",
+    {"job_id": {"type": "integer"}, "send_to_phone": {"type": "boolean"}},
+    ["job_id"],
+)
+def read_job_result(ctx, job_id: int, send_to_phone: bool = False):
+    job = _runner(ctx).jobs.get(job_id)
+    if job is None:
+        return f"There's no job {job_id}."
+    if not job.result:
+        return f"Job {job_id} is {job.status} and has no result yet."
+    if send_to_phone:
+        rt = ctx.extras.get("runtime")
+        if rt is not None:
+            rt.announcer.push_full(f"Job {job_id} ({job.status}):\n\n{job.result}")
+    return f"Full result of job {job_id} ({job.status}){' (also sent to the phone)' if send_to_phone else ''}:\n\n{job.result}"

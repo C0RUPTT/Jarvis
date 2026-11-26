@@ -900,7 +900,7 @@
   async function poll() {
     if (!token) return;
     try {
-      const { events } = await api("/api/events?after=" + lastEventId + (conversation ? "&talking=1" : ""));
+      const { events } = await api("/api/events?after=" + lastEventId + (conversation || state === "standby" ? "&talking=1" : ""));
       for (const ev of events) {
         if (lastEventId === 0 && Date.now() / 1000 - ev.time > 60) { lastEventId = ev.id; continue; } // stale
         lastEventId = Math.max(lastEventId, ev.id);
@@ -924,11 +924,14 @@
   // Finished work, relayed session replies, reminders: said out loud in Jarvis's voice. Never over
   // you: if you're mid-sentence or Jarvis is answering, it waits for the end of that turn.
   async function drainAnnouncements() {
-    if (!conversation) { announcements.length = 0; return; }   // not talking: it's in the transcript and on Telegram
+    // Not talking and not on standby: it's in the transcript and on Telegram. On standby, Jarvis
+    // still says it (the sound is unlocked), then goes back to waiting for "Hey Jarvis".
+    if (!conversation && state !== "standby") { announcements.length = 0; return; }
     if (announcing || !announcements.length) return;
     if (state === "thinking" || state === "speaking" || userTalking) return;   // called again after the turn
     announcing = true;
-    const resume = conversation && state === "listening";
+    const resume = conversation && state === "listening", wasStandby = state === "standby";
+    if (wasStandby) stopWake();
     if (resume) pauseMic();
     try {
       while (announcements.length) {
@@ -941,8 +944,8 @@
       }
     } finally {
       announcing = false;
-      setState(conversation ? "listening" : "idle");
-      if (resume || conversation) listen();
+      if (wasStandby && !conversation) { setState("standby"); listenForWake(); }
+      else { setState(conversation ? "listening" : "idle"); if (resume || conversation) listen(); }
     }
   }
   // ---------- recovering from interruptions (switching apps, calls, Siri, the screen locking) ----------

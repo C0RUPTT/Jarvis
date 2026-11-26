@@ -50,7 +50,9 @@ SUMMARY_PROMPT = """Rewrite this for Jarvis to SAY ALOUD to the user, who is lis
 Rules: lead with the answer or outcome in one sentence. Then at most three key points, grouping
 related items ("three fixes are live; two need your test"). No lists, markdown, URLs or code.
 Under 70 words. Plain spoken English, British butler tone, call the user "sir" at most once.
-Do not mention that you are summarising. Reply with only the words to speak.
+Report the outcome itself as Jarvis would ("Job 12 is done: the login page is fixed"), never talk
+about "the text", "the message" or "the reply". Do not mention that you are summarising.
+Reply with only the words to speak.
 
 {context}Text:
 {text}"""

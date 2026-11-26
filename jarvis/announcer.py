@@ -29,6 +29,7 @@ class Announcer:
         self._events: list[dict] = []
         self._held: list[str] = []
         self._lock = threading.Lock()
+        self._web_pending: dict = {}   # said-by-the-web-app checks (see _check_spoken)
         self._state_file = state_file
         self._load()
         if quiet_start:
@@ -68,6 +69,8 @@ class Announcer:
         self._add({"type": "say", "text": text, "silent": silent})
         web_says_it = time.time() < self.web_talking_until   # the web app will speak it right now
         self.push(text, silent=silent or web_says_it)
+        if web_says_it and not silent:
+            self._check_spoken(text)
         if not silent and not web_says_it:   # spoken alert by text message, if set up (see sms.py)
             from . import sms
 
@@ -115,7 +118,8 @@ class Announcer:
         return False
 
     _recent_pushes: dict = {}
-    web_talking_until: float = 0.0   # the web app is in a voice conversation until then
+    web_talking_until: float = 0.0
+    _web_pending: dict = {}   # the web app is in a voice conversation until then
     _unread: list = []   # notifications sent to the phone but not yet read out (for "read my notifications")
 
     def take_unread(self, max_age_hours: float = 24) -> list[str]:
@@ -126,21 +130,33 @@ class Announcer:
         items = _drop_repeats(items)
         return [f"At {datetime.fromtimestamp(t):%I:%M %p}".replace("At 0", "At ") + f": {text}" for t, text in items]
 
+    def _check_spoken(self, text: str) -> None:
+        """The web app should say this out loud now (its Telegram copy went out silently). If it
+        doesn't confirm within 25 s (it went to standby or the background, or the phone locked),
+        send it again with sound, so a finished job is never missed."""
+        import threading
+
+        key = " ".join(text.lower().split())
+        with self._lock:
+            self._web_pending[key] = time.time()
+
+        def check():
+            with self._lock:
+                missed = self._web_pending.pop(key, None) is not None
+            if missed:
+                print(f"[notify] the web app didn't say it; sending with sound: {text[:60]!r}")
+                self.push(f"In case you missed it: {text}", silent=False)
+        threading.Timer(25, check).start()
+
     def mark_read(self, text: str) -> None:
+        """The web app has just said this out loud."""
         from .clock import exact_times
 
-        text = exact_times(text)
-        # Guard: the same notification again within two minutes is a repeat, not news.
-        key = " ".join(text.lower().split())
-        now = time.time()
         with self._lock:
-            self._recent_pushes = {k: t for k, t in self._recent_pushes.items() if now - t < 120}
-            if key in self._recent_pushes:
-                print(f"[notify] skipped a repeat: {text[:60]!r}")
-                return True
-            self._recent_pushes[key] = now
-        with self._lock:
-            self._unread = [i for i in self._unread if i[1] != text]
+            for t in (text, exact_times(text)):
+                self._web_pending.pop(" ".join(t.lower().split()), None)
+            fixed = exact_times(text)
+            self._unread = [i for i in self._unread if i[1] not in (text, fixed)]
 
     def push(self, text: str, silent: bool = False, title: str = "Jarvis") -> bool:
         """Send a notification to the phone. Returns False if no channel is set up."""

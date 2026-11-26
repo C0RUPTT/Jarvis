@@ -364,14 +364,19 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
 
         def job_finished(job):
             verb = {"done": "is done", "failed": "hit a problem"}.get(job.status, job.status)
-            text = f"Job {job.id} {verb}. {job.result}"
+            body = job.result or ""
             if job.preview:
                 from . import admin
 
                 host = admin.public_host()
                 if host:
-                    text += f"\nTry it: https://{host}/preview/{job.preview}"
-            announcer.announce(text, quiet=job.quiet)
+                    body += f"\nTry it: https://{host}/preview/{job.preview}"
+            if job.quiet:
+                announcer.announce(f"Job {job.id} {verb}. {body}", quiet=True)
+                return
+            # Like a session reply: spoken where you are (Siri, the web app), short when it's long,
+            # with the full text on the phone; never held back by a missed moment.
+            rt._deliver_long(f"Job {job.id} {verb}.", body, context=f"A background coding job ({job.task[:100]}) finished.")
 
         jobs = JobRunner(config.data_dir, config.projects_dir, config.worker_model,
                          config.cc_permission_mode, on_finished=job_finished)

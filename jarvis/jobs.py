@@ -56,7 +56,8 @@ class Job:
         if self.status == "running":
             line += f" (running {age // 60}m {age % 60}s)"
         if self.result and self.status in {"done", "failed"}:
-            line += f"\n   result: {self.result[:400]}"
+            more = " [preview: read_job_result gives the full result]" if len(self.result) > 400 else ""
+            line += f"\n   result: {self.result[:400]}{more}"
         return line
 
 
@@ -76,10 +77,21 @@ class JobRunner:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._current: subprocess.Popen | None = None
-        for job in self.jobs.values():           # jobs interrupted by a restart go back in the queue
-            if job.status == "running":
-                job.status = "queued"
+        resume_watching = []
+        for job in self.jobs.values():
+            if job.status != "running":
+                continue
+            if job.cloud_url:
+                # A cloud session keeps working while Jarvis restarts (every update): just resume
+                # watching for its finish signal, so you're still told when it's done. (Re-queueing
+                # it used to start a second cloud session.)
+                resume_watching.append(job)
+            else:
+                job.status = "queued"            # a job on this server died with the restart: run again
+                job.activity = (job.activity + [f"{time.strftime('%H:%M:%S')}  Jarvis restarted; running it again."])[-40:]
         threading.Thread(target=self._loop, daemon=True, name="jarvis-jobs").start()
+        for job in resume_watching:
+            threading.Thread(target=self._watch_cloud, args=(job, job.path), daemon=True).start()
 
     # -- public API (used by tools) -------------------------------------------
 
