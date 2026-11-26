@@ -530,7 +530,7 @@
     };
     srTimer = setInterval(() => {
       const now = performance.now();
-      if (text && now - lastHeard > 1500) {                       // a 1.5-second pause: they've finished
+      if (text && now - lastHeard > 1100) {                       // a 1.1-second pause: they've finished
         done = true; stopSR(); turnEndedAt = lastHeard;
         if (isStandby(text)) goStandby(); else sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
@@ -632,10 +632,10 @@
       const threshold = Math.max(noiseFloor * 2.5, 0.006);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold && (speechStart || now > tailUntil)) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
-      if (speechStart && now - lastLoud > 1200) {                // a 1.2-second pause: they've finished
+      if (speechStart && now - lastLoud > 900) {                 // a 0.9-second pause: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
-        turnEndedAt = performance.now() - 1200;   // when you actually stopped talking
+        turnEndedAt = performance.now() - 900;    // when you actually stopped talking
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
         recorder.stop();
       } else if (!speechStart && now - recStart > 15000) {       // long silence: start a fresh clip
@@ -657,9 +657,11 @@
     for (let i = 0; i < 400; i++) {                     // up to ~7 minutes
       if (document.visibilityState === "visible") {
         try {
-          const r = await api("/api/talk/" + id);
+          const asked = performance.now();
+          const r = await api(`/api/talk/${id}?wait=${onSpeech ? 8 : 15}`);   // returns as soon as something's ready
           if (r.status === "done") { savePending(null); return r; }
-          if (r.speech_id && onSpeech) { onSpeech(r.speech_id); onSpeech = null; }
+          if (r.speech_id && onSpeech) { onSpeech(r.speech_id); onSpeech = null; continue; }
+          if (performance.now() - asked > 1000) continue;   // the server already waited: ask again straight away
         } catch (e) {
           if (/Unknown or expired|404/.test(e.message)) { savePending(null); return null; }
         }

@@ -260,7 +260,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 "telegram": rt.telegram is not None, "mode": announcer.mode}
 
     talks: dict[str, dict] = {}   # async web-app turns: id -> {"status", "result", "done_at", "fetched"}
-    talks_lock = threading.Lock()
+    talks_lock = threading.Condition()   # also signals "something changed" to waiting phones
 
     speech_jobs: dict[str, dict] = {}   # id -> sentence audio for a web-app answer (see /api/speech)
 
@@ -312,7 +312,9 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 _add_speech(job, sentence)
                 if talk_id:
                     with talks_lock:
-                        talks.get(talk_id, {})["speech_id"] = speech_id
+                        if not talks.get(talk_id, {}).get("speech_id"):
+                            talks.get(talk_id, {})["speech_id"] = speech_id
+                            talks_lock.notify_all()
             reply = rt.ask(heard, on_sentence=early if job is not None else None)
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        queue=round(asked_at - queued_at, 2), think=round(time.monotonic() - asked_at, 2),
@@ -437,6 +439,7 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             result = {"heard": "", "reply": f"Sorry, that failed: {e}", "speech": "", "audio": None}
         with talks_lock:
             talks[talk_id].update(status="done", result=result, done_at=time.time())
+            talks_lock.notify_all()
 
         def unclaimed():   # the app was closed or frozen: send the answer to Telegram instead
             with talks_lock:
@@ -500,12 +503,18 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         return {"id": talk_id}
 
     @app.get("/api/talk/{talk_id}")
-    def talk_result(talk_id: str, x_jarvis_token: str | None = Header(None)):
+    def talk_result(talk_id: str, x_jarvis_token: str | None = Header(None), wait: float = Query(0)):
+        """wait=N: hold the request up to N seconds until the answer (or its first sentence) is ready,
+        so the phone hears about it the moment it happens instead of checking repeatedly."""
         check(x_jarvis_token)
         with talks_lock:
             item = talks.get(talk_id)
             if not item:
                 raise HTTPException(status_code=404, detail="Unknown or expired request")
+            had_speech = bool(item.get("speech_id"))
+            if wait > 0 and item["status"] != "done":
+                talks_lock.wait_for(lambda: item["status"] == "done" or (not had_speech and item.get("speech_id")),
+                                    timeout=min(wait, 20))
             if item["status"] != "done":
                 return {"status": "working", "speech_id": item.get("speech_id", "")}
             item["fetched"] = True

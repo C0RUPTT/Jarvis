@@ -123,6 +123,7 @@ class ClaudeCodeBrain:
         can start speaking before the whole answer exists)."""
         with self.lock:
             self._on_sentence = on_sentence
+            self._emitted = 0
             for attempt in range(2):
                 if self.proc is None or self.proc.poll() is not None:
                     self._start(fresh=attempt > 0)  # if resuming fails, start fresh
@@ -186,6 +187,8 @@ class ClaudeCodeBrain:
     # -- streaming sentences -----------------------------------------------------
     _on_sentence = None
     _pending = ""
+    _emitted = 0   # pieces sent this turn
+    _FIRST_BREAK = re.compile(r"^(.*?[,;:—])\s+(?=\S)", re.S)
     _ABBREVIATION = re.compile(r"(?:\b(?:[A-Za-z]\.){1,3}|\b(?:Mr|Mrs|Ms|Dr|St|vs|etc|approx|No))\.?$")
     _SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
 
@@ -205,6 +208,13 @@ class ClaudeCodeBrain:
             for sentence in done:
                 self._emit(sentence)
             self._pending = f"{carry} {parts[-1]}" if carry else parts[-1]   # keep its trailing space
+            # The very first words of an answer: a long first sentence can start at its first natural
+            # break (a comma after six or more words), so Jarvis starts talking sooner.
+            if not self._emitted and not carry:
+                m = self._FIRST_BREAK.match(self._pending)
+                if m and len(m.group(1).split()) >= 6:
+                    self._emit(m.group(1))
+                    self._pending = self._pending[m.end():]
         elif kind in ("content_block_stop", "message_stop"):
             self._flush_sentences()
 
@@ -215,6 +225,8 @@ class ClaudeCodeBrain:
 
     def _emit(self, sentence: str) -> None:
         sentence = sentence.strip()
+        if sentence:
+            self._emitted += 1
         if sentence and self._on_sentence is not None:
             try:
                 self._on_sentence(sentence)
