@@ -408,7 +408,7 @@
 
   // ---------- listening (voice activity detection) ----------
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
-  let resumeOnReturn = false, micFailures = 0, calibrated = false, calibratedFor = null;
+  let resumeOnReturn = false, micFailures = 0, calibrated = false, calibratedFor = null, micRetried = false;
   let speechStart = 0, lastLoud = 0, recStart = 0, noiseFloor = 0.01, vadTimer = null;
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
 
@@ -625,7 +625,7 @@
       bargedIn = false; calibrateUntil = 0;
       speechStart = lastLoud = performance.now(); userTalking = true;
     }
-    let peak = 0;
+    let peak = 0, loudest = 0;
     const levelLog = setInterval(() => {   // input levels, for /logs
       if (!vadTimer) return clearInterval(levelLog);
       diag("mic-level", { noise: +noiseFloor.toFixed(4), peak: +peak.toFixed(4), speaking: !!speechStart,
@@ -639,7 +639,13 @@
       if (now < calibrateUntil) { noiseFloor = Math.max(0.002, noiseFloor * 0.7 + rms * 0.3); return; }
       if (voiceEndedAt) reportGap();   // from here on, you're heard
       if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
-      peak = Math.max(peak, rms);
+      peak = Math.max(peak, rms); loudest = Math.max(loudest, rms);
+      if (!micRetried && now - recStart > 2500 && loudest < 0.0008) {   // dead silent: the mic isn't really on
+        micRetried = true; diag("mic-silent", { loudest });
+        clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
+        stream.getTracks().forEach(t => t.stop()); stream = null;
+        listen(); return;
+      }
       // The phone's own mic (echo-cancelled, at arm's length) is far quieter than AirPods: a fixed
       // 0.02 never triggered on it. Speech = clearly above this room's noise.
       const threshold = Math.max(noiseFloor * 2.5, 0.006);
@@ -775,6 +781,7 @@
 
   // ---------- conversation control ----------
   async function startConversation() {
+    micRetried = false;
     diag("start", { mode: useSR ? "phone-recognition" : "recording", ua: navigator.userAgent.slice(0, 120) });
     unlockAudio();
     conversation = true;
@@ -788,13 +795,15 @@
     setState("idle");
   }
 
+  // For automated tests: go to standby as if you'd said "I'm done".
+  orb.addEventListener("jarvis-test-standby", () => goStandby());
   // For automated tests: one "Jarvis answers, then listens again" cycle.
   orb.addEventListener("jarvis-test-reply", async () => {
     pauseMic(); await reply({ reply: "Test.", audio: "AAAA" }); listen();
   });
   orb.onclick = () => {
     if (state === "speaking") { stopSpeaking(); return; }    // interrupt; the loop resumes listening
-    if (state === "standby") { stopWake(); startConversation(); return; }
+    if (state === "standby") { (useSR ? stopWake() : handOverMic()).then(startConversation); return; }
     if (conversation) endConversation(); else startConversation();
   };
 
@@ -804,7 +813,7 @@
   const SIGNOFFS = ["Very good, sir. I'll be here.", "Standing by, sir.", "Right you are, sir. Just say the word.",
     "I'll be here if you need me, sir."];
   const WAKE = /\b(hey |hi |ok(ay)? |yo )?(jarvis|jervis|jarvas|jarvi's)\b[,.!?]*\s*/i;
-  let wakeRec = null, wakeTimer = null;
+  let wakeRec = null, wakeTimer = null, wakeReleased = Promise.resolve();
   async function goStandby() {
     conversation = false; pauseMic(); stopSR();
     const line = SIGNOFFS[Math.floor(Math.random() * SIGNOFFS.length)];
@@ -821,7 +830,20 @@
   }
   function stopWake() {
     clearInterval(wakeTimer); wakeTimer = null;
-    if (wakeRec) { const r = wakeRec; wakeRec = null; r.onend = r.onresult = r.onerror = null; try { r.abort(); } catch {} }
+    if (!wakeRec) return wakeReleased;   // already stopping: wait for that same release
+    const r = wakeRec; wakeRec = null; r.onresult = r.onerror = null;
+    // Resolves once iPhone has really let go of the mic (or after 0.8 s), so the recording that
+    // follows doesn't start on a mic that's still busy and come up silent.
+    wakeReleased = new Promise(res => { r.onend = () => res(); setTimeout(res, 800); });
+    try { r.abort(); } catch {}
+    return wakeReleased;
+  }
+  // From standby back to talking: release the wake-word listener, then open the mic before Jarvis
+  // says "Yes, sir?", so it's ready the moment you speak.
+  async function handOverMic() {
+    await stopWake();
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }   // fresh, not a stale one
+    try { await openMic(); } catch (e) { diag("mic-open-failed", { error: String(e?.name || e), after: "wake" }); }
   }
   function listenForWake() {
     if (state !== "standby") return;
@@ -859,7 +881,8 @@
   }
   async function wake(request) {
     diag("wake", { with_request: !!request });
-    conversation = true;
+    conversation = true; micRetried = false;
+    if (!useSR) await handOverMic();
     if (request && request.split(/\s+/).length >= 2) { sendText(request); return; }   // "Hey Jarvis, what's the time"
     const line = "Yes, sir?";
     setState("speaking");
@@ -867,7 +890,7 @@
     try { data = { ...(await api("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: line }) })), speech: line }; } catch {}
     await speak(data);
-    await new Promise(r => setTimeout(r, 350));
+    if (useSR) await new Promise(r => setTimeout(r, 350));
     listen();
   }
 
