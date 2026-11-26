@@ -322,15 +322,17 @@
   }
   async function speakParts(data) {
     const run = ++speechRun;
-    let next = fetchPart(data.speech_id, 0);
+    let next = fetchPart(data.speech_id, 0), heard = 0;
     for (let i = 0; ; i++) {
       const part = await next;
-      if (run !== speechRun || part.end) return;            // interrupted, or that was all
+      if (run !== speechRun) return -1;                     // interrupted (you tapped or talked)
+      if (part.end) return heard;                           // that was all
       next = fetchPart(data.speech_id, i + 1);              // the next sentence loads while this plays
       if (i === 0 && part.blob) player.addEventListener("playing", reportTiming, { once: true });
       const failed = !part.blob || (await playBlob(part.blob)) === "failed";
       if (failed && part.text) await new Promise(r => speakLocally(part.text, r));
-      if (run !== speechRun) return;
+      if (!failed || part.text) heard++;
+      if (run !== speechRun) return -1;
     }
   }
 
@@ -339,7 +341,7 @@
     watchForBargeIn();
     return new Promise((resolve) => {
       if (data.speech_id) {
-        speakParts(data).then(resolve);
+        speakParts(data).then(resolve);   // resolves with how many sentences were heard
       } else if (data.audio) {
         player.src = "data:audio/mpeg;base64," + data.audio;
         player.onended = player.onerror = resolve;
@@ -422,7 +424,8 @@
       t.onended = () => { diag("mic-ended"); if (stream) stream.__stale = true; };
     }
     if (!audioCtx || audioCtx.state === "closed") audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    await audioCtx.resume().catch(() => {});
+    // (on a page iPhone has frozen, resume() can hang forever: never wait more than a second)
+    await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024;
     src.connect(analyser);
@@ -613,7 +616,12 @@
       conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return;
     }
     micFailures = 0;
-    if (audioCtx && audioCtx.state !== "running") await audioCtx.resume().catch(() => {});
+    if (audioCtx && audioCtx.state !== "running") {
+      // iPhone can leave the page's audio frozen after you come back from another app, and only a
+      // tap may unfreeze it. Listening to frozen audio hears nothing, so ask for a tap instead.
+      await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
+      if (audioCtx.state !== "running") return needTap("audio-" + audioCtx.state);
+    }
     setState("listening"); userTalking = false;
     startRecorder();
     const buf = new Float32Array(analyser.fftSize);
@@ -640,6 +648,10 @@
       if (voiceEndedAt) reportGap();   // from here on, you're heard
       if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
       peak = Math.max(peak, rms); loudest = Math.max(loudest, rms);
+      if (now - recStart > 2500 && loudest < 0.0008 && micRetried) {   // still dead after a reopen: needs a tap
+        clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
+        return needTap("mic-silent-twice");
+      }
       if (!micRetried && now - recStart > 2500 && loudest < 0.0008) {   // dead silent: the mic isn't really on
         micRetried = true; diag("mic-silent", { loudest });
         clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
@@ -771,7 +783,14 @@
     if (data.reply) add("jarvis", data.reply);
     if (!data.reply && !early) return;
     setState("speaking");
-    await (early || speak(data));   // already speaking if it started early
+    const heard = await (early || speak(data));   // already speaking if it started early
+    if (heard === 0 && data.reply) {   // nothing came out (voice failed): say it with the phone's voice
+      diag("nothing-spoken", { len: data.reply.length });
+      await new Promise(r => speakLocally(data.speech || data.reply, r));
+      if (document.body.classList.contains("voice")) {
+        const t = $("toast"); if (t) { t.textContent = data.reply.slice(0, 300); t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 8000); }
+      }
+    }
     voiceEndedAt = bargedIn ? 0 : performance.now();
     stopBargeWatch();
     // Recording mode keeps the mic open between turns, so no pause is needed. iPhone's own
@@ -780,7 +799,22 @@
   }
 
   // ---------- conversation control ----------
+  // Listening can't continue without a tap (iPhone's rule after an interruption): say so plainly, and
+  // let a tap anywhere on the screen start again.
+  let tapToResume = false;
+  function needTap(reason) {
+    diag("needs-tap", { reason });
+    conversation = false; tapToResume = true; pauseMic();
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    setState("idle", "Tap anywhere to keep talking");
+  }
+  document.addEventListener("click", (e) => {
+    if (!tapToResume || e.target === orb) return;
+    tapToResume = false; startConversation();
+  });
   async function startConversation() {
+    tapToResume = false;
+    if (audioCtx && audioCtx.state !== "running") { try { audioCtx.close(); } catch {} audioCtx = null; }   // a fresh one, on this tap
     micRetried = false;
     diag("start", { mode: useSR ? "phone-recognition" : "recording", ua: navigator.userAgent.slice(0, 120) });
     unlockAudio();
@@ -1024,7 +1058,8 @@
     resumeOnReturn = false;
     diag("app-visible", { state, conversation });
     await new Promise(r => setTimeout(r, 400));    // let iPhone hand the audio back
-    if (audioCtx && audioCtx.state !== "running") await audioCtx.resume().catch(() => {});
+    if (audioCtx && audioCtx.state !== "running")   // (can hang on a frozen page: a second at most)
+      await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
     if (state === "standby") { listenForWake(); return; }
     if (state === "speaking" || jarvisTalking()) return;   // mid-reply: listening starts when it ends
     if (conversation && state !== "thinking") listen();   // a pending answer resumes on its own (collect)

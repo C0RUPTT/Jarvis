@@ -315,7 +315,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                         if not talks.get(talk_id, {}).get("speech_id"):
                             talks.get(talk_id, {})["speech_id"] = speech_id
                             talks_lock.notify_all()
-            reply = rt.ask(heard, on_sentence=early if job is not None else None)
+            try:
+                reply = rt.ask(heard, on_sentence=early if job is not None else None)
+            except Exception as e:  # noqa: BLE001 - say what happened instead of going silent
+                print(f"[web] answering failed: {e}")
+                reply = "Sorry, sir, something went wrong while answering that. Please try again."
         metrics.record("web", time.monotonic() - started, stt=round(heard_at - started, 2),
                        queue=round(asked_at - queued_at, 2), think=round(time.monotonic() - asked_at, 2),
                        on_phone=bool(text))
@@ -323,26 +327,36 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         # Voice, sentence by sentence: the first sentence is short, so its audio is ready almost at
         # once and Jarvis starts talking while the rest is still being generated (all in parallel,
         # starting now, before the phone even asks).
-        spoken_reply = _voice_sized(reply, heard)
-        parts = _speech_parts(clean_for_speech(spoken_reply)) if config.online_voice else []
+        try:
+            spoken_reply = _voice_sized(reply, heard)
+            parts = _speech_parts(clean_for_speech(spoken_reply)) if config.online_voice else []
+        except Exception as e:  # noqa: BLE001
+            print(f"[web] preparing the spoken answer failed: {e}")
+            spoken_reply, parts = reply, [clean_for_speech(reply)[:400]]
         if job is not None:
-            # Add whatever wasn't already spoken early. If what was streamed isn't the start of the
-            # final answer (e.g. "Let me check" before a search), the whole answer follows it.
-            norm = lambda x: " ".join(re.sub(r"[^a-z0-9 ]", " ", x.lower()).split())   # noqa: E731
-            said, final = norm(" ".join(streamed)), norm(clean_for_speech(spoken_reply))
-            if streamed and final.startswith(said):
-                rest, done_chars = [], 0
-                for sentence in re.split(r"(?<=[.!?])\s+", clean_for_speech(spoken_reply)):
-                    if done_chars < len(said):
-                        done_chars += len(norm(sentence)) + 1
-                        continue
-                    rest.append(sentence)
-                parts = [p for p in rest if p.strip()]
-            elif streamed and len(reply) > len(spoken_reply):
-                parts = [spoken.FULL_ON_PHONE]   # long: the start was spoken, the whole text is on the phone
-            for part in parts:
-                _add_speech(job, part)
-            _end_speech(job)
+            try:
+                # Add whatever wasn't already spoken early. If what was streamed isn't the start of the
+                # final answer (e.g. "Let me check" before a search), the whole answer follows it.
+                norm = lambda x: " ".join(re.sub(r"[^a-z0-9 ]", " ", x.lower()).split())   # noqa: E731
+                said, final = norm(" ".join(streamed)), norm(clean_for_speech(spoken_reply))
+                if streamed and final.startswith(said):
+                    rest, done_chars = [], 0
+                    for sentence in re.split(r"(?<=[.!?])\s+", clean_for_speech(spoken_reply)):
+                        if done_chars < len(said):
+                            done_chars += len(norm(sentence)) + 1
+                            continue
+                        rest.append(sentence)
+                    parts = [p for p in rest if p.strip()]
+                elif streamed and len(reply) > len(spoken_reply):
+                    parts = [spoken.FULL_ON_PHONE]   # long: the start was spoken, the whole text is on the phone
+                for part in parts:
+                    _add_speech(job, part)
+            except Exception as e:  # noqa: BLE001
+                print(f"[web] finishing the spoken answer failed: {e}")
+                if not job["parts"]:
+                    _add_speech(job, clean_for_speech(spoken_reply)[:400])
+            finally:
+                _end_speech(job)   # always: otherwise the phone waits in 'speaking' with nothing to say
         return {"heard": heard, "reply": reply, "speech": clean_for_speech(spoken_reply), "audio": None,
                 "speech_id": speech_id, "speech_parts": job["parts"] if job is not None else []}
 
