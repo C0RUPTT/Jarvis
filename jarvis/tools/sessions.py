@@ -26,6 +26,8 @@ def list_claude_sessions(ctx):
     for s in items[:10]:
         status = " [waiting for its reply]" if s["id"] in waiting else ""
         said = claude_sessions.trim(s.get("last_summary", ""), 400) or "(nothing yet)"
+        if len(s.get("last_summary", "")) > 400:
+            said += " [preview: read_claude_session gives the full reply]"
         lines.append(f"- {s['project'] or '?'} ({ago(s['last_seen'])}), id {s['id']}{status}. Last said: {said}")
     # Background jobs Jarvis started are sessions too.
     jobs = ctx.extras.get("jobs")
@@ -86,3 +88,42 @@ def register_claude_session(ctx, link: str, project: str):
         return "That doesn't look like a Claude Code session link (claude.ai/code/session_...)."
     claude_sessions.register(ctx.config.data_dir, project, sid)
     return f"Saved: '{project}' is {sid}. It's in list_claude_sessions now."
+
+
+@tool(
+    "read_claude_session",
+    "Read the FULL last reply of one of the user's Claude Code sessions (list_claude_sessions only "
+    "shows a short preview). Use for follow-ups like 'what came after that?', 'read me the rest' or "
+    "'what did my Jarvis session say?'. Speak only the part they asked about, or two or three key "
+    "points; set send_to_phone to also send the complete text to their phone (do that when it's long "
+    "or they ask for it).",
+    {
+        "session": {"type": "string", "description": "Project name (e.g. Jarvis), session id or claude.ai/code link"},
+        "send_to_phone": {"type": "boolean", "description": "Also send the full reply to the phone as text"},
+    },
+    ["session"],
+)
+def read_claude_session(ctx, session: str, send_to_phone: bool = False):
+    from .. import claude_sessions
+
+    target = session.strip()
+    items = claude_sessions.load(ctx.config.data_dir)
+    if target.startswith(("session_", "cse_")) or "claude.ai/code" in target:
+        sid = claude_sessions.normalize(target)
+        match = next((s for s in items if s["id"] == sid), None)
+    else:
+        match = claude_sessions.find(ctx.config.data_dir, target)
+    if not match:
+        return f"I don't know a session called '{session}'. Use list_claude_sessions to see them."
+    text = (match.get("last_summary") or "").strip()
+    if not text:
+        return f"The {match['project']} session hasn't replied yet."
+    mins = int((time.time() - match["last_seen"]) // 60)
+    if send_to_phone:
+        rt = ctx.extras.get("runtime")
+        announcer = rt.announcer if rt is not None else None
+        if announcer is not None:
+            announcer.push_full(f"Your {match['project']} session's last reply:\n\n{text}")
+    cut = "" if len(text) < 3900 else " (it was very long, so this is its first ~4,000 characters)"
+    return (f"Full last reply of the {match['project']} session, {mins} min ago{cut}"
+            f"{' (also sent to the phone)' if send_to_phone else ''}:\n\n{text}")
