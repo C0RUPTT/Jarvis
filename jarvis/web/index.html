@@ -1129,8 +1129,24 @@
     }
   }, 1000);
 
-  if (token) api("/api/status").then(s => add("sys", `Connected. At your service, ${s.user_name}.`))
-    .catch(e => add("sys", "⚠ Can't reach Jarvis: " + e.message));
+  // Say plainly when the server is slow to answer (busy or restarting) instead of looking dead.
+  async function checkConnection(attempt = 0) {
+    if (!token) return;
+    const slow = setTimeout(() => { if (state === "idle") statusEl.textContent = "Connecting to Jarvis…"; }, 2500);
+    try {
+      const s = await api("/api/status");
+      clearTimeout(slow);
+      if (state === "idle") setState("idle");
+      add("sys", `Connected. At your service, ${s.user_name}.`);
+    } catch (e) {
+      clearTimeout(slow);
+      if (/Bad token/.test(e.message)) return;
+      if (state === "idle") statusEl.textContent = attempt < 2 ? "Connecting to Jarvis…" : "Jarvis is restarting, one moment…";
+      if (attempt < 40) setTimeout(() => checkConnection(attempt + 1), 3000);
+    }
+  }
+  checkConnection();
+  try { navigator.serviceWorker?.register("/sw.js").catch(() => {}); } catch {}
 })();
 </script>
 

@@ -251,6 +251,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     def index():
         return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/sw.js")
+    def service_worker():
+        """Keeps a copy of the app on the phone, so it opens at once even while the server is busy."""
+        return FileResponse(WEB_DIR / "sw.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
     @app.get("/api/recent")
     def recent(x_jarvis_token: str | None = Header(None)):
         """The last few exchanges from any channel (Siri, Telegram), so the app continues the chat."""
