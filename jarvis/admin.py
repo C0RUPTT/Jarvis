@@ -9,6 +9,7 @@
     /emailhelp  spoken alerts through the Mail app (steps); /emailsetup to connect
     /place    save a named place: /place Sam = 12 Oak St  (/places lists them)
     /announcetest  test Siri reading Jarvis messages in your AirPods (lock the phone)
+    /obsidian  Obsidian notes by voice: status, or the one-time setup
     /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
@@ -454,6 +455,22 @@ def _announce_test(telegram) -> str:
             "blocking Telegram.")
 
 
+def _obsidian_status() -> str:
+    from . import notes
+
+    root = notes.vault()
+    if root is None:
+        return ("Obsidian isn't connected yet. One-time setup, about 5 minutes, in the Google Cloud SSH window:\n\n"
+                "bash ~/Jarvis/scripts/setup-obsidian.sh\n\n"
+                "It asks for your Obsidian email, password and 2FA code, and your vault's encryption "
+                "password if it has one. Type them there, never here. It downloads your vault into an empty "
+                "folder (so nothing in your vault can be changed by the setup) and keeps it synced. Then "
+                "say: \"Jarvis, add test idea to App Ideas.\"")
+    count = len(list(root.rglob("*.md")))
+    return (f"Obsidian: {count} notes in {root}. Sync service: "
+            + ("running." if notes.sync_running() else "NOT running (fix: sudo systemctl restart obsidian-sync)."))
+
+
 def _places_list(config) -> str:
     from . import places
 
@@ -495,6 +512,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "obsidian": lambda: _obsidian_status(),
         "announcetest": lambda: delivery_state(brain) + "\n\n" + _announce_test(getattr(brain, "_telegram", None)),
         "place": lambda arg="": _place_cmd(config, arg),
         "places": lambda: _places_list(config),
