@@ -78,7 +78,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         except Exception as e:  # noqa: BLE001
             print(f"[voice] couldn't preload speech recognition: {e}")
 
-    if os.getenv("JARVIS_PRELOAD_WHISPER", "1") != "0":
+    from . import stt_cloud
+
+    # The server's own speech recognition takes ~200 MB of this small server's 1 GB. With fast cloud
+    # recognition (Groq) it's only a fallback, so it's loaded only if it's ever needed.
+    if os.getenv("JARVIS_PRELOAD_WHISPER", "1") != "0" and not stt_cloud.enabled():
         threading.Thread(target=warm_speech_model, daemon=True).start()
     brain, announcer = rt.brain, rt.announcer
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)

@@ -31,7 +31,7 @@ def transcribe(path: str, timeout: float | None = None) -> str:
     def field(key: str, value: str) -> bytes:
         return f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode()
 
-    body = (field("model", MODEL) + field("language", "en") + field("response_format", "json")
+    body = (field("model", MODEL) + field("language", "en") + field("response_format", "verbose_json")
             + f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
               f"Content-Type: application/octet-stream\r\n\r\n".encode() + data + b"\r\n"
             + f"--{boundary}--\r\n".encode())
@@ -39,7 +39,24 @@ def transcribe(path: str, timeout: float | None = None) -> str:
         "Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
         "Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": "jarvis-assistant"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return str(json.load(resp).get("text", "")).strip()
+        data = json.load(resp)
+    return real_speech(data)
+
+
+def real_speech(data: dict) -> str:
+    """Speech models invent words for background noise ("Thank you.", "I'm a man."). Each piece of
+    text comes with how likely it was really silence and how sure the model was; keep only the
+    pieces that were really spoken."""
+    segments = data.get("segments")
+    if not segments:
+        return str(data.get("text", "")).strip()
+    kept = [seg.get("text", "") for seg in segments
+            if not (seg.get("no_speech_prob", 0) > 0.5 and seg.get("avg_logprob", 0) < -0.6)
+            and seg.get("avg_logprob", 0) > -1.2]
+    text = " ".join(t.strip() for t in kept).strip()
+    if not text and data.get("text", "").strip():
+        print(f"[voice] ignored background noise heard as {data.get('text', '').strip()!r}")
+    return text
 
 
 def save_key(key: str) -> str:

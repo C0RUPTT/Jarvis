@@ -164,8 +164,12 @@ class JobRunner:
 
         output, result_event = "", None
         try:
+            # Background work runs at the lowest CPU and disk priority, so your conversations with
+            # Jarvis stay quick while a job is busy on this small server.
+            nice = ["nice", "-n", "19"] + (["ionice", "-c", "3"] if shutil.which("ionice") else []) \
+                if shutil.which("nice") else []
             self._current = subprocess.Popen(
-                cmd, cwd=job.path or self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                nice + cmd, cwd=job.path or self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             )
             killer = threading.Timer(3 * 3600, self._current.kill)

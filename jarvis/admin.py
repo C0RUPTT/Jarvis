@@ -196,8 +196,12 @@ def auto_update_loop(rt, every_minutes: int = 15) -> None:
             return True
         if now < getattr(rt.announcer, "web_talking_until", 0):
             return True
+        # A job running on this server would be restarted from scratch by an update, so wait for it,
+        # but not forever (a long research job kept every fix from installing for 8 hours). Cloud
+        # jobs don't count: they keep running elsewhere and are watched again after the restart.
         jobs = rt.jobs.jobs.values() if rt.jobs is not None else []
-        return any(j.status == "running" for j in jobs)
+        local = [j for j in jobs if j.status == "running" and not j.cloud_url]
+        return any(now - (j.started or now) < 2 * 3600 for j in local)
 
     def loop():
         time.sleep(120)   # let startup finish

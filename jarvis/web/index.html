@@ -676,7 +676,7 @@
       const pauseAllowed = talkedFor > 45000 ? 2200 : talkedFor > 15000 ? 1600 : 900;
       if (speechStart && now - lastLoud > pauseAllowed) {        // paused long enough: they've finished
         clearInterval(vadTimer); vadTimer = null;
-        if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
+        if (lastLoud - speechStart < 500) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough, a rustle: not talking
         turnEndedAt = performance.now() - pauseAllowed;   // when you actually stopped talking
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
         recorder.stop();
