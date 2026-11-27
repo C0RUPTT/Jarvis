@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -49,6 +50,7 @@ class Job:
     cloud_url: str = ""                             # Claude Code cloud session, if it runs there
     branch: str = ""                                # branch the cloud session finished on
     path: str = ""                                  # local folder of the repo, if any
+    workspace: bool = False                         # runs in the private jarvis-workspace repo (no project)
 
     def describe(self) -> str:
         age = int(time.time() - (self.started or self.created))
@@ -140,9 +142,17 @@ class JobRunner:
         with self._lock:
             job.status, job.started = "running", time.time()
             self._save()
-        if job.repo:
-            from . import cloud
+        from . import cloud
 
+        if not job.repo and cloud.enabled() and os.getenv("JARVIS_JOBS_IN_CLOUD", "1") != "0":
+            # Not about a project: still run it in Claude Code's cloud (Anthropic's machines), in a
+            # private scratch repository, so this small server stays quick for your conversations.
+            ws, error = cloud.ensure_workspace()
+            if ws:
+                job.repo, job.workspace = ws, True
+            else:
+                self._note(job, f"No cloud workspace ({error}); running on this server.")
+        if job.repo:
             if cloud.enabled() and self._run_cloud(job):
                 return          # running in the cloud; a watcher thread finishes the job
             if not job.path:    # cloud disabled: still work inside a local clone of the repo
@@ -229,7 +239,8 @@ class JobRunner:
             job.cloud_url = previous.cloud_url
         else:
             self._note(job, "Starting a Claude Code cloud session...")
-            job.cloud_url, error = cloud.launch(job.task, job.id, path)
+            task = job.task + (cloud.WORKSPACE_INSTRUCTIONS.format(job_id=job.id) if job.workspace else "")
+            job.cloud_url, error = cloud.launch(task, job.id, path)
         if error or not job.cloud_url:
             self._note(job, f"Cloud session unavailable ({error or 'no session link'}); running on this server instead.")
             job.cloud_url = ""
@@ -266,6 +277,10 @@ class JobRunner:
                 with self._lock:
                     job.status, job.finished = "done", time.time()
                     job.result = f"{summary} (Branch: {job.branch})"
+                    if job.workspace:   # the full answer, written by the session into the workspace
+                        full = cloud.read_file(job.repo, job.branch, f"job-{job.id}/RESULT.md")
+                        if full:
+                            job.result = full.strip()
                     job.preview = find_preview(self.workdir, since=job.started or 0)
                     self._save()
                 self.on_finished(job)

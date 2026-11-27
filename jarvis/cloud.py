@@ -18,6 +18,8 @@ import select
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import github
@@ -132,3 +134,51 @@ def checkout_branch(path: str, branch: str) -> None:
     subprocess.run(["git", "fetch", "-q", "origin", branch], cwd=path, capture_output=True, timeout=300)
     subprocess.run(["git", "checkout", "-q", "-B", branch, f"origin/{branch}"], cwd=path,
                    capture_output=True, timeout=120)
+
+
+WORKSPACE_INSTRUCTIONS = """
+
+---
+This runs in Jarvis's private scratch repository (it isn't a project). Put anything you create in a
+folder named job-{job_id}/, and write your complete answer or findings, in full detail, to
+job-{job_id}/RESULT.md: that file is what the user reads (Jarvis speaks a short version)."""
+
+
+def ensure_workspace() -> tuple[str, str]:
+    """The private '<you>/jarvis-workspace' repository for jobs that aren't about a project,
+    created if needed. Returns (repo, error)."""
+    tok = github.token()
+    if not tok:
+        return "", "no GitHub key"
+    name = os.getenv("JARVIS_WORKSPACE_REPO") or f"{github.whoami(tok)}/jarvis-workspace"
+    headers = {"Authorization": f"Bearer {tok}", "User-Agent": "jarvis-assistant", "Content-Type": "application/json"}
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"https://api.github.com/repos/{name}", headers=headers),
+                               timeout=20).close()
+        return name, ""
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return "", f"couldn't check {name} ({e.code})"
+    body = json.dumps({"name": name.split("/")[1], "private": True, "auto_init": True,
+                       "description": "Jarvis's private workspace for background jobs"}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request("https://api.github.com/user/repos", data=body,
+                                                      method="POST", headers=headers), timeout=20).close()
+        time.sleep(3)
+        return name, ""
+    except urllib.error.HTTPError as e:
+        return "", (f"my GitHub key can't create {name} ({e.code}); create it at github.com/new "
+                    "(Private, with a README)")
+
+
+def read_file(repo: str, branch: str, path: str) -> str:
+    """A file's text from a branch on GitHub ("" if missing)."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/contents/{path}?ref={urllib.parse.quote(branch)}",
+        headers={"Authorization": f"Bearer {github.token()}", "User-Agent": "jarvis-assistant",
+                 "Accept": "application/vnd.github.raw"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.read().decode("utf-8", "replace")[:20000]
+    except Exception:  # noqa: BLE001
+        return ""

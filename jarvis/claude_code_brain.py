@@ -126,6 +126,9 @@ class ClaudeCodeBrain:
         with self.lock:
             self._on_sentence = on_sentence
             self._emitted = 0
+            carry = self._fresh_start_if_too_long()
+            if carry:
+                text = carry + text
             for attempt in range(2):
                 if self.proc is None or self.proc.poll() is not None:
                     self._start(fresh=attempt > 0)  # if resuming fails, start fresh
@@ -136,9 +139,46 @@ class ClaudeCodeBrain:
                     self._flush_sentences()
                 if reply is not None:
                     metrics.record("turn", time.monotonic() - started, self.last_usage)
+                    self._note_size()
                     return reply
                 self._stop()
             return "I couldn't reach Claude Code. Try running `claude` on the laptop to check it's logged in."
+
+    # -- keeping the conversation quick ---------------------------------------------
+    # Every reply makes Claude re-read the whole conversation, and Jarvis's conversation never ends,
+    # so after a few days each answer took ~25 s (400,000+ tokens of history). When it gets long, or
+    # each morning, Jarvis starts a fresh conversation, bringing along the last few exchanges.
+    MAX_CONTEXT = int(os.getenv("JARVIS_MAX_CONTEXT", "90000"))   # tokens of history per reply
+    _too_long = False
+
+    def _note_size(self) -> None:
+        u = self.last_usage or {}
+        size = u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+        if size > self.MAX_CONTEXT:
+            self._too_long = True
+            print(f"[claude-code] conversation is {size:,} tokens: the next message starts a fresh one")
+
+    def _fresh_start_if_too_long(self) -> str:
+        """Start a fresh conversation if the old one got long or is from before this morning.
+        Returns a short recap of the last exchanges to put in front of the next message."""
+        stale = False
+        if self.session_file.exists():
+            started = datetime.fromtimestamp(self.session_file.stat().st_mtime)
+            now = datetime.now()
+            morning = now.replace(hour=4, minute=0, second=0, microsecond=0)
+            stale = now >= morning > started and (now - started).total_seconds() > 4 * 3600
+        if not (self._too_long or stale):
+            return ""
+        self._too_long = False
+        self._stop()
+        self.session_file.unlink(missing_ok=True)
+        rt = getattr(self, "_runtime", None)
+        recent = (getattr(rt, "recent", None) or [])[-4:]
+        if not recent:
+            return ""
+        lines = [f"You: {t['you'][:200]}\nJarvis: {t['jarvis'][:300]}" for t in recent]
+        return ("[A fresh conversation (to keep replies quick). The last few exchanges, for context:\n"
+                + "\n".join(lines) + "\n]\n\n")
 
     def _turn(self, text: str) -> str | None:
         """Send one message and collect the reply. None means the process died."""
