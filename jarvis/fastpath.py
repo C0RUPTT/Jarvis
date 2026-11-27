@@ -59,6 +59,9 @@ def is_handoff(text: str) -> bool:
         return False
     if re.fullmatch(r"(?:open |switch to |go to )?(?:yourself|jarvis)", t) or re.fullmatch(r"(?:web |jarvis )?app mode", t):
         return True
+    # Siri sometimes hears "switch" as "search", "which" or "stitch"
+    if re.fullmatch(r"(?:ok(?:ay)? |let'?s )?(?:search|which|stitch|swish|sweet)(?: over)?(?: to| in)?(?: the| your)?(?: jarvis| web)? apps?", t):
+        return True
     if re.fullmatch(r"hand (?:it|this|me) (?:off|over)(?: to the app)?", t):
         return True
     if not (_HANDOFF_VERB.search(t) and _HANDOFF_TARGET.search(t)):
