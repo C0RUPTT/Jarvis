@@ -212,6 +212,9 @@ class Runtime:
 
         reply = exact_times(reply)
         self.recent = (self.recent + [{"you": text, "jarvis": reply, "time": time.time()}])[-8:]
+        from . import history
+
+        history.add(self.config.data_dir, text, reply)   # searchable later (search_past_conversations)
         return reply
 
     _LONG_START = re.compile(r"^(ok(ay)?,? |hey jarvis,? )?(i have a long (one|message|request|question)|"

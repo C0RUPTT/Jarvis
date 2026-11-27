@@ -150,13 +150,28 @@ class ClaudeCodeBrain:
     # each morning, Jarvis starts a fresh conversation, bringing along the last few exchanges.
     MAX_CONTEXT = int(os.getenv("JARVIS_MAX_CONTEXT", "90000"))   # tokens of history per reply
     _too_long = False
+    _summary = ""            # of the conversation so far, written in the background, carried over
+
+    def _session_started(self) -> float:
+        try:
+            return float((self.state_dir / "session-started").read_text())
+        except (OSError, ValueError):
+            return 0.0
 
     def _note_size(self) -> None:
         u = self.last_usage or {}
         size = u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
-        if size > self.MAX_CONTEXT:
+        if size > self.MAX_CONTEXT and not self._too_long:
             self._too_long = True
             print(f"[claude-code] conversation is {size:,} tokens: the next message starts a fresh one")
+            # Write the summary now, in the background, so the next message isn't kept waiting.
+            from . import history
+
+            started = self._session_started()
+
+            def write_summary():
+                self._summary = history.summarize(history.since(self.ctx.config.data_dir, started))
+            threading.Thread(target=write_summary, daemon=True).start()
 
     def _fresh_start_if_too_long(self) -> str:
         """Start a fresh conversation if the old one got long or is from before this morning.
@@ -172,13 +187,17 @@ class ClaudeCodeBrain:
         self._too_long = False
         self._stop()
         self.session_file.unlink(missing_ok=True)
+        (self.state_dir / "session-started").write_text(str(time.time()))
+        summary, self._summary = self._summary, ""
         rt = getattr(self, "_runtime", None)
         recent = (getattr(rt, "recent", None) or [])[-4:]
-        if not recent:
+        if not recent and not summary:
             return ""
         lines = [f"You: {t['you'][:200]}\nJarvis: {t['jarvis'][:300]}" for t in recent]
-        return ("[A fresh conversation (to keep replies quick). The last few exchanges, for context:\n"
-                + "\n".join(lines) + "\n]\n\n")
+        return ("[A fresh conversation (to keep replies quick)."
+                + (f" Summary of the conversation so far:\n{summary}\n" if summary else "")
+                + ("The last few exchanges:\n" + "\n".join(lines) + "\n" if lines else "")
+                + "Anything older: search_past_conversations.]\n\n")
 
     def _turn(self, text: str) -> str | None:
         """Send one message and collect the reply. None means the process died."""
