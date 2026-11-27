@@ -48,6 +48,20 @@ def geocode(place: str, near: dict | None = None) -> dict | None:
     return {"lat": float(found[0]["lat"]), "lon": float(found[0]["lon"]), "name": found[0].get("display_name", place)}
 
 
+def drive_with_traffic(a: dict, b: dict) -> dict | None:
+    """TomTom (free tier, no card): live-traffic drive time, if a key is set (/tomtom in Telegram)."""
+    import os
+
+    key = os.getenv("TOMTOM_API_KEY")
+    if not key:
+        return None
+    url = (f"https://api.tomtom.com/routing/1/calculateRoute/{a['lat']},{a['lon']}:{b['lat']},{b['lon']}/json?"
+           + urllib.parse.urlencode({"key": key, "traffic": "true", "travelMode": "car"}))
+    summary = _get(url)["routes"][0]["summary"]
+    return {"minutes": round(summary["travelTimeInSeconds"] / 60), "miles": round(summary["lengthInMeters"] / 1609.34, 1),
+            "delay": round(summary.get("trafficDelayInSeconds", 0) / 60)}
+
+
 def drive(a: dict, b: dict) -> dict | None:
     url = (f"https://router.project-osrm.org/route/v1/driving/{a['lon']},{a['lat']};{b['lon']},{b['lat']}"
            "?overview=false")
@@ -88,6 +102,22 @@ def get_my_location(ctx):
     ["destination"],
 )
 def travel_time(ctx, destination: str, origin: str = ""):
+    import time as _t
+
+    from .. import location
+
+    waze_q = "https://waze.com/ul?" + urllib.parse.urlencode({"q": destination, "navigate": "yes"})
+    rt = ctx.extras.get("runtime")
+    if not origin and rt is not None and _t.time() - getattr(rt, "last_siri", 0) < 60:
+        # Asked through Siri: the phone works it out with Apple Maps, which includes live traffic.
+        text = location.request_eta(destination, timeout=25)
+        minutes = location.parse_minutes(text) if text else None
+        if minutes is not None:
+            h, m = divmod(minutes, 60)
+            took = f"{h} h {m} min" if h else f"{m} min"
+            return (f"About {took} by car to {destination} from their current location, with current traffic "
+                    f"(Apple Maps on their phone). Say it in one short sentence, e.g. 'About {took} with current "
+                    f"traffic, sir.' Offer Waze; open it only if they asked for directions. waze_link: {waze_q}")
     try:
         start = geocode(origin) if origin else _here(ctx)
         if not start:
@@ -95,7 +125,13 @@ def travel_time(ctx, destination: str, origin: str = ""):
         end = geocode(destination, near=start)
         if not end:
             return f"Couldn't find '{destination}' on the map. Ask them to say it differently or give the address."
-        route = drive(start, end)
+        route, traffic = None, False
+        try:
+            route = drive_with_traffic(start, end)
+            traffic = route is not None
+        except Exception as e:  # noqa: BLE001 - TomTom unreachable or over its free limit
+            print(f"[travel] TomTom failed ({e}); using routing without traffic")
+        route = route or drive(start, end)
     except Exception as e:  # noqa: BLE001 - map services unreachable
         return f"The map service didn't answer ({e}). Offer to open Waze instead."
     waze = "https://waze.com/ul?" + urllib.parse.urlencode({"ll": f"{end['lat']},{end['lon']}", "navigate": "yes"})
@@ -103,6 +139,11 @@ def travel_time(ctx, destination: str, origin: str = ""):
         return f"No driving route found to {end['name']}. Waze link: {waze}"
     h, m = divmod(route["minutes"], 60)
     took = f"{h} h {m} min" if h else f"{m} min"
-    return (f"About {took} by car, {route['miles']} miles, to {end['name']} (OpenStreetMap routing, without "
-            f"live traffic). From: {'their current location' if not origin else origin}. "
-            f"waze_link: {waze}")
+    if traffic:
+        delay = f", including about {route['delay']} min of traffic delay" if route.get("delay") else ""
+        how = f"with current traffic (TomTom){delay}"
+    else:
+        how = ("WITHOUT live traffic (OpenStreetMap): say so. Through Siri the Shortcut's travel-time step "
+               "gives a live-traffic ETA (/locationsetup); a free TomTom key adds traffic here too (/tomtom)")
+    return (f"About {took} by car, {route['miles']} miles, to {end['name']}, {how}. From: "
+            f"{'their current location' if not origin else origin}. waze_link: {waze}")

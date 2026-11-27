@@ -74,3 +74,49 @@ def missing_help(siri_recent: bool) -> str:
     return ("The phone didn't send its location. In the web app: allow location when asked. With Siri: "
             "send /locationsetup in Telegram for the one-time Shortcut step. Or share it in Telegram "
             "(paperclip > Location).")
+
+
+# -- a traffic-aware ETA computed on the phone (Apple Maps "Get Travel Time" in the Siri Shortcut) --
+_eta: dict = {}                 # {"text", "time", "dest"}
+_eta_wanted: dict = {"dest": "", "until": 0.0}
+
+
+def eta_wanted() -> str:
+    """The destination a question is waiting on an ETA for ("" if none)."""
+    return _eta_wanted["dest"] if time.time() < _eta_wanted["until"] else ""
+
+
+def set_eta(text: str) -> None:
+    with _lock:
+        _eta.update(text=str(text)[:80], time=time.time(), dest=_eta_wanted["dest"])
+        _eta_wanted.update(dest="", until=0.0)
+        _lock.notify_all()
+    print(f"[location] phone sent a travel time: {text!r}")
+
+
+def request_eta(destination: str, timeout: float = 25) -> str | None:
+    """Ask the Siri Shortcut to run Apple Maps' Get Travel Time to `destination`; returns its text
+    (e.g. "23 min", "1 hr 5 min") or None if it didn't come back in time."""
+    now = time.time()
+    with _lock:
+        _eta_wanted.update(dest=destination, until=now + timeout)
+        _lock.wait_for(lambda: _eta.get("time", 0) >= now, timeout=timeout)
+        _eta_wanted.update(dest="", until=0.0)
+        if _eta.get("time", 0) >= now:
+            return _eta["text"]
+    return None
+
+
+def parse_minutes(text: str) -> int | None:
+    """'23 min', '1 hr 5 min', '1 hour, 5 minutes', '45m', '1:05' -> minutes."""
+    import re
+
+    t = text.lower()
+    if m := re.fullmatch(r"\s*(\d+):(\d{2})\s*", t):
+        return int(m.group(1)) * 60 + int(m.group(2))
+    hours = re.search(r"(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b", t)
+    mins = re.search(r"(\d+)\s*(?:m|min|mins|minute|minutes)\b", t)
+    if not hours and not mins:
+        only = re.fullmatch(r"\s*(\d+)\s*", t)
+        return int(only.group(1)) if only else None
+    return round(float(hours.group(1)) * 60 if hours else 0) + (int(mins.group(1)) if mins else 0)

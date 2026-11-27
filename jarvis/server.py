@@ -594,6 +594,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
 
                 if location.wanted():
                     result["location"] = "yes"   # the Shortcut sends the phone's location with its wait call
+                if location.eta_wanted():
+                    result["eta"] = location.eta_wanted()   # the Shortcut asks Apple Maps how long it takes
             late_link = announcer.take_recent_open()
             if opens:
                 result["open"] = opens[-1]["url"]
@@ -634,6 +636,12 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 siritrace.record("location", "phone sent its location")
             except ValueError:
                 pass
+        got_eta = bool(str(payload.get("eta") or "").strip())
+        if got_eta:
+            from . import location
+
+            location.set_eta(str(payload["eta"]))
+            siritrace.record("location", f"phone sent a travel time: {payload['eta']}")
         wait_started = time.monotonic()
         rt.last_siri = wait_state["last"] = time.time()
         print("[siri] waiting for a late answer...")
@@ -649,7 +657,8 @@ def create_app(config: Config, speak_on_laptop: bool = False):
         # Siri gives up on a step that takes ~10 seconds.
         # Siri ends a Shortcut that runs about 10 seconds without hearing from you, and the
         # question, "One moment" and this wait all count. So: one short wait, then hand back.
-        deadline = time.time() + float(os.getenv("JARVIS_SIRI_WAIT", "3"))
+        # (a little longer when the phone just sent a travel time: the answer is only a moment away)
+        deadline = time.time() + float(os.getenv("JARVIS_SIRI_WAIT", "3")) + (2 if got_eta else 0)
         while time.time() < deadline:
             ready = _take_finished() + rt.take_siri_inbox()
             if ready:

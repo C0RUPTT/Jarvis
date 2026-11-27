@@ -343,26 +343,31 @@ def set_city(arg: str = "") -> str:
     return f"Got it. Your morning briefing will include the weather for {arg.strip()}."
 
 
-LOCATION_SETUP = """Location for route questions (only sent when you ask something like "how long to Homewood?").
+LOCATION_SETUP = """Live-traffic ETAs through Siri ("how long to Homewood?"), worked out by Apple Maps on your phone. Your location is only used when you ask.
 
-WEB APP: nothing to set up. The first time, iPhone asks to use your location: tap Allow.
-(If you tapped Don't Allow: Settings > Apps > Safari > Location > Ask or Allow.)
+In your Jarvis Siri Shortcut, find the "Otherwise" under "If Mode is ask" (the waiting part: Speak Text, then Get Contents of URL with the wait link). Add these BETWEEN Speak Text and that Get Contents of URL:
 
-SIRI SHORTCUT: one change, in the Otherwise part of "If Mode is ask" (the waiting part):
-1. Tap your "Get Contents of URL" with the wait link, then the down arrow > Show More:
-   Request Body: JSON. Add two Text fields:
-   key: lat   value: Current Location > Latitude
-   key: lon   value: Current Location > Longitude
-2. Above it (after Speak Text), add "Get Dictionary Value": key  location  in  Response.
-3. Above the "Get Contents of URL", add: If (Dictionary Value) has any value
-   inside it: "Get Current Location"   (leave Otherwise empty), End If.
-   In step 1, pick Latitude/Longitude from that Current Location.
+1. "Get Dictionary Value": key  eta  in  Response
+2. "If":  Dictionary Value  has any value
+     inside: "Get Travel Time":  Driving  from  Current Location  to  Dictionary Value
+   End If   (delete any Otherwise)
+3. "Get Dictionary Value": key  location  in  Response
+4. "If":  Dictionary Value (from step 3)  has any value
+     inside: "Get Current Location"
+   End If
+
+Then tap that "Get Contents of URL" (wait link) > Show More > Request Body: JSON, and add Text fields:
+   eta  =  Travel Time   (from step 2)
+   lat  =  Current Location > Latitude    (from step 4)
+   lon  =  Current Location > Longitude
+(Method stays POST.)
+
 The first time, iPhone asks to let Jarvis use your location: tap Always Allow.
-(Settings > Privacy & Security > Location Services > Shortcuts: While Using the App.)
+If it never asks: Settings > Privacy & Security > Location Services > Shortcuts > While Using the App.
 
-TELEGRAM: tap the paperclip > Location > Send My Current Location, then ask.
+Test: "Hey Siri, Jarvis" > "How long will it take me to get to Homewood?" You should hear "One moment", then "About 23 minutes with current traffic". Waze stays the default if you ask for directions.
 
-Test: "How long will it take me to get to Homewood?" Jarvis gives drive time and distance (no live traffic) and offers Waze."""
+Web app: nothing to set up (allow location when asked). Its ETAs don't include traffic unless you add a free TomTom key: send /tomtom for how."""
 
 
 CALL_SETUP = """Calling by name ("Jarvis, call Khloee"). Your contacts stay on your phone: Jarvis only sends the name to a Shortcut on the phone, which looks it up and dials.
@@ -411,6 +416,17 @@ EMAIL_HELP = """Spoken alerts through the Mail app: Jarvis emails you each alert
 Off any time: /textoff. Tip: in Mail, you can mute or file these emails with a rule; the automation still reads them."""
 
 
+def _save_tomtom(key: str) -> str:
+    key = key.strip()
+    if not key:
+        return ("Optional: live traffic for ETAs outside Siri (the web app). Free, no card: sign up at "
+                "developer.tomtom.com, open your Dashboard > Keys, copy the key, then send /tomtom <key> here "
+                "(I delete the message right away). Siri doesn't need this: its ETAs come from Apple Maps.")
+    set_env_value("TOMTOM_API_KEY", key)
+    os.environ["TOMTOM_API_KEY"] = key
+    return "Saved. Travel times outside Siri now include live traffic (TomTom)."
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
@@ -419,6 +435,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "tomtom": lambda arg="": _save_tomtom(arg),
         "emailhelp": lambda: EMAIL_HELP,
         "emailsetup": lambda arg="": __import__("jarvis.sms", fromlist=["x"]).setup_email(arg, ROOT / ".env"),
         "siri": lambda: __import__("jarvis.siritrace", fromlist=["x"]).report(),
