@@ -618,9 +618,15 @@
     micFailures = 0;
     if (audioCtx && audioCtx.state !== "running") {
       // iPhone can leave the page's audio frozen after you come back from another app, and only a
-      // tap may unfreeze it. Listening to frozen audio hears nothing, so ask for a tap instead.
-      await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
-      if (audioCtx.state !== "running") return needTap("audio-" + audioCtx.state);
+      // tap may unfreeze it. Give it a fair chance first (it can take a few seconds after Jarvis
+      // has spoken), and only then ask for a tap.
+      for (let i = 0; i < 4 && audioCtx.state !== "running"; i++) {
+        await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
+      }
+      if (audioCtx.state !== "running" && document.visibilityState === "visible") {
+        if (!conversation) return;
+        return needTap("audio-" + audioCtx.state);
+      }
     }
     setState("listening"); userTalking = false;
     startRecorder();
@@ -648,11 +654,11 @@
       if (voiceEndedAt) reportGap();   // from here on, you're heard
       if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
       peak = Math.max(peak, rms); loudest = Math.max(loudest, rms);
-      if (now - recStart > 2500 && loudest < 0.0008 && micRetried) {   // still dead after a reopen: needs a tap
+      if (now - recStart > 4000 && loudest < 0.00001 && micRetried && !speechStart) {   // still no signal at all after a reopen: needs a tap
         clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
         return needTap("mic-silent-twice");
       }
-      if (!micRetried && now - recStart > 2500 && loudest < 0.0008) {   // dead silent: the mic isn't really on
+      if (!micRetried && now - recStart > 4000 && loudest < 0.00001 && !speechStart) {   // no signal at all: the mic isn't really on
         micRetried = true; diag("mic-silent", { loudest });
         clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
         stream.getTracks().forEach(t => t.stop()); stream = null;

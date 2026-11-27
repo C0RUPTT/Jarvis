@@ -120,12 +120,40 @@ def _relay(text: str, rt) -> str | None:
     return f"Sent to your {match['project']} session. I'll read you its reply when it comes."
 
 
+NAVIGATE = re.compile(
+    r"^(?:please |can you |could you )?(?:take me|drive me|get me|bring me|navigate|route me|directions|"
+    r"give me directions|let'?s go|head|start navigation)(?: back)?(?:\s+(?:to|home)\b)?\s*(?P<place>.*?)\s*$", re.I)
+
+
+def _navigate(text: str, rt) -> str | None:
+    """'Take me home' / 'take me to Sam': open Waze at once (no Claude, so the link opens right away,
+    even through Siri). Only for Home, Work and saved places; anything else goes to Claude."""
+    m = NAVIGATE.match(text)
+    if not m or rt is None:
+        return None
+    place = m.group("place") or ""
+    if re.match(r"^(?:take me|drive me|get me|bring me|route me|head)(?: back)? home\b", text, re.I):
+        place = "home"
+    from . import places
+
+    found = places.waze_link(rt.config.data_dir, place) if place else None
+    if not found:
+        return None
+    link, label = found
+    rt.announcer.open_on_phone(link, f"Waze to {label}")
+    where = {"Home": "home", "Work": "to work"}.get(label, f"to {label}")
+    return f"Taking you {where}, sir. Opening Waze."
+
+
 def handle(text: str, rt) -> str | None:
     """Return a reply if this is a fast-path command, otherwise None (send it to Claude)."""
     cleaned = re.sub(r"^(hey |ok |okay )?jarvis[,.!]?\s*", "", text.strip(), flags=re.I).strip(" .!?")
     if HANDOFF.match(text.strip()) and rt is not None:
         rt.announcer.open_on_phone(app_link(rt), "Jarvis")
         return "Over to the app, sir. Tap the screen once and carry on; I remember where we were."
+    navigated = _navigate(cleaned, rt)
+    if navigated is not None:
+        return navigated
     relayed = _relay(cleaned, rt)
     if relayed is not None:
         return relayed

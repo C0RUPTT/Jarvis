@@ -7,6 +7,7 @@
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
     /emailhelp  spoken alerts through the Mail app (steps); /emailsetup to connect
+    /place    save a named place: /place Sam = 12 Oak St  (/places lists them)
     /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
@@ -416,6 +417,28 @@ EMAIL_HELP = """Spoken alerts through the Mail app: Jarvis emails you each alert
 Off any time: /textoff. Tip: in Mail, you can mute or file these emails with a rule; the automation still reads them."""
 
 
+def _places_list(config) -> str:
+    from . import places
+
+    items = places.load(config.data_dir)
+    lines = [f"- {p['name']}: {p['address']}" for p in items.values()]
+    return ("Saved places (Home and Work come from Waze):\n" + "\n".join(lines)) if lines else (
+        "No saved places yet. Add one: /place Sam = 12 Oak St, Birmingham AL")
+
+
+def _place_cmd(config, arg: str) -> str:
+    from . import places
+
+    if "=" not in arg:
+        return ("Save a place for 'take me to ...': /place Sam = 12 Oak St, Birmingham AL\n"
+                "Forget one: /place Sam =\nList them: /places\n(Home and Work use Waze's own favorites.)")
+    name, address = (x.strip() for x in arg.split("=", 1))
+    if not address:
+        return "Forgotten." if places.forget(config.data_dir, name) else f"I had no place called {name}."
+    places.save(config.data_dir, name, address)
+    return f"Saved. Say 'take me to {name}' and Waze opens straight there."
+
+
 def _save_tomtom(key: str) -> str:
     key = key.strip()
     if not key:
@@ -435,6 +458,8 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "place": lambda arg="": _place_cmd(config, arg),
+        "places": lambda: _places_list(config),
         "tomtom": lambda arg="": _save_tomtom(arg),
         "emailhelp": lambda: EMAIL_HELP,
         "emailsetup": lambda arg="": __import__("jarvis.sms", fromlist=["x"]).setup_email(arg, ROOT / ".env"),
