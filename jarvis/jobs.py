@@ -63,6 +63,19 @@ class Job:
         return line
 
 
+def _kill_tree(proc) -> None:
+    """Stop a job and every program it started (tests, builds), not just its Claude worker."""
+    import signal
+
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 class JobRunner:
     def __init__(self, data_dir: Path, workdir: Path, model: str, permission_mode: str,
                  on_finished: Callable[[Job], None]):
@@ -113,7 +126,7 @@ class JobRunner:
             if not job or job.status not in {"queued", "running"}:
                 return f"No active job #{job_id}."
             if job.status == "running" and self._current:
-                self._current.kill()
+                _kill_tree(self._current)
             job.status = "cancelled"
             self._save()
         return f"Cancelled job #{job_id}."
@@ -138,7 +151,10 @@ class JobRunner:
             queued = [j for j in self.jobs.values() if j.status == "queued"]
             return min(queued, key=lambda j: j.id) if queued else None
 
-    LOCAL_JOB_MB = int(os.getenv("JARVIS_LOCAL_JOB_MB", "450"))   # free memory needed to start a job here
+    # Free memory needed to start a job on this server. Measured: a job's worker plus the programs it
+    # runs (tests, builds) took ~350 MB, which a 1 GB server can't spare while you talk to Jarvis. So
+    # on the free-tier server jobs effectively always run in the cloud (jarvis-workspace on GitHub).
+    LOCAL_JOB_MB = int(os.getenv("JARVIS_LOCAL_JOB_MB", "700"))
 
     def _wait_for_memory(self, job: Job, max_wait: int = 3600) -> bool:
         try:
@@ -147,7 +163,7 @@ class JobRunner:
             return True
         waited, noted = 0, False
         while psutil.virtual_memory().available / 1e6 < self.LOCAL_JOB_MB:
-            if job.status == "cancelled" or waited >= max_wait:
+            if job.status == "cancelled" or waited >= max_wait or psutil.virtual_memory().total / 1e6 < self.LOCAL_JOB_MB + 300:
                 return False
             if not noted:
                 self._note(job, "Waiting for free memory before starting (this server is small).")
@@ -213,8 +229,9 @@ class JobRunner:
             self._current = subprocess.Popen(
                 nice + cmd, cwd=job.path or self.workdir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                start_new_session=True,   # its own process group: stopping the job stops what it started
             )
-            killer = threading.Timer(3 * 3600, self._current.kill)
+            killer = threading.Timer(3 * 3600, _kill_tree, args=(self._current,))
             killer.start()
             try:
                 for line in self._current.stdout:
