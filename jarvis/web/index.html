@@ -311,7 +311,10 @@
       guard = setInterval(() => {   // stuck (no progress for 3 s): move on rather than wait forever
         if (player.currentTime === last) { if (++still >= 6) finish(); } else { still = 0; last = player.currentTime; }
       }, 500);
-      player.play().catch(() => finish("failed"));
+      player.play().catch((e) => {
+        if (e && e.name === "NotAllowedError") audioBlocked = true;   // iPhone wants a tap before sound
+        finish("failed");
+      });
     });
   }
   let turnEndedAt = 0;
@@ -399,7 +402,7 @@
   }
   function stopBargeWatch() { clearInterval(bargeTimer); bargeTimer = null; }
 
-  let localSpeaking = false;
+  let localSpeaking = false, audioBlocked = false;
   function stopSpeaking() {
     stopBargeWatch();
     speechRun++;
@@ -410,6 +413,8 @@
   // ---------- listening (voice activity detection) ----------
   let stream = null, audioCtx = null, analyser = null, recorder = null, chunks = [];
   let resumeOnReturn = false, micFailures = 0, calibrated = false, calibratedFor = null, micRetried = false;
+  let lastSignalAt = 0;
+  const heardSince = (t) => (lastSignalAt > t ? 1 : 0);   // any sound at all from the mic since t
   let speechStart = 0, lastLoud = 0, recStart = 0, noiseFloor = 0.01, vadTimer = null;
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder?.isTypeSupported?.(m)) || "";
 
@@ -613,8 +618,12 @@
     catch (e) {
       if (document.visibilityState === "hidden") { resumeOnReturn = true; return; }
       diag("mic-open-failed", { error: String(e?.name || e) });
-      if (++micFailures < 3) { setTimeout(listen, 1000); return; }   // often just a moment's interruption
-      conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return;
+      if (++micFailures < 2) { setTimeout(listen, 1000); return; }   // often just a moment's interruption
+      micFailures = 0;
+      // Right after a tap the phone really is refusing: point to the setting. Otherwise it's iPhone
+      // wanting a tap after the app was in the background.
+      if (Date.now() - lastTap < 3000) { conversation = false; setState("idle", "Microphone blocked. Allow it in Settings › Safari."); return; }
+      return needTap("mic-" + String(e?.name || e));
     }
     micFailures = 0;
     if (audioCtx && audioCtx.state !== "running") {
@@ -655,6 +664,7 @@
       if (voiceEndedAt) reportGap();   // from here on, you're heard
       if (!speechStart) noiseFloor = noiseFloor * 0.995 + rms * 0.005;   // follow the room's noise
       peak = Math.max(peak, rms); loudest = Math.max(loudest, rms);
+      if (rms > 0) lastSignalAt = performance.now();
       if (now - recStart > 4000 && loudest < 0.00001 && micRetried && !speechStart) {   // still no signal at all after a reopen: needs a tap
         clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
         return needTap("mic-silent-twice");
@@ -806,6 +816,12 @@
     if (!data.reply && !early) return;
     setState("speaking");
     const heard = await (early || speak(data));   // already speaking if it started early
+    if (audioBlocked && data.reply) {   // the phone wouldn't play sound: show the answer, ask for a tap
+      audioBlocked = false;
+      const t = $("toast"); if (t) { t.textContent = data.reply.slice(0, 300); t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 10000); }
+      needTap("sound-blocked");
+      return;
+    }
     if (heard === 0 && data.reply) {   // nothing came out (voice failed): say it with the phone's voice
       diag("nothing-spoken", { len: data.reply.length });
       await new Promise(r => speakLocally(data.speech || data.reply, r));
@@ -829,6 +845,13 @@
     conversation = false; tapToResume = true; pauseMic();
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     setState("idle", "Tap anywhere to keep talking");
+    if (!document.getElementById("handoff")) {   // impossible to miss: one tap restarts listening and voice
+      const cover = document.createElement("div");
+      cover.id = "handoff";
+      cover.innerHTML = "<div><b>Tap anywhere</b><br>to continue talking to Jarvis</div>";
+      document.body.appendChild(cover);
+      cover.onclick = () => { cover.remove(); tapToResume = false; startConversation(); };
+    }
   }
   document.addEventListener("click", (e) => {
     if (!tapToResume || e.target === orb) return;
@@ -1104,7 +1127,17 @@
       await Promise.race([audioCtx.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
     if (state === "standby") { listenForWake(); return; }
     if (state === "speaking" || jarvisTalking()) return;   // mid-reply: listening starts when it ends
-    if (conversation && state !== "thinking") listen();   // a pending answer resumes on its own (collect)
+    if (conversation && state !== "thinking") {
+      listen();   // a pending answer resumes on its own (collect)
+      const since = performance.now();
+      setTimeout(() => {   // is it really listening? (a mic can reopen "fine" and deliver nothing)
+        if (!conversation || state !== "listening" || document.visibilityState !== "visible") return;
+        const track = stream?.getAudioTracks()[0];
+        const dead = !stream || !track || track.readyState === "ended" || track.muted ||
+                     (audioCtx && audioCtx.state !== "running") || (!useSR && heardSince(since) === 0);
+        if (dead) needTap("not-listening-after-return");
+      }, 3000);
+    }
   }
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" ? onLeave() : onReturn());
   window.addEventListener("pagehide", onLeave);
