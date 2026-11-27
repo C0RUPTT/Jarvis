@@ -138,6 +138,24 @@ class JobRunner:
             queued = [j for j in self.jobs.values() if j.status == "queued"]
             return min(queued, key=lambda j: j.id) if queued else None
 
+    LOCAL_JOB_MB = int(os.getenv("JARVIS_LOCAL_JOB_MB", "450"))   # free memory needed to start a job here
+
+    def _wait_for_memory(self, job: Job, max_wait: int = 3600) -> bool:
+        try:
+            import psutil
+        except ImportError:
+            return True
+        waited, noted = 0, False
+        while psutil.virtual_memory().available / 1e6 < self.LOCAL_JOB_MB:
+            if job.status == "cancelled" or waited >= max_wait:
+                return False
+            if not noted:
+                self._note(job, "Waiting for free memory before starting (this server is small).")
+                noted = True
+            time.sleep(30)
+            waited += 30
+        return True
+
     def _run(self, job: Job) -> None:
         with self._lock:
             job.status, job.started = "running", time.time()
@@ -160,6 +178,20 @@ class JobRunner:
             self._note(job, f"Working on {job.repo} on this server" + (f" in {job.path}." if job.path else "."))
             job.task += (f"\n\n(The project is the GitHub repository {job.repo}"
                          + (", already cloned in the current directory" if job.path else "") + ".)")
+
+        # On this 1 GB server, a job's Claude worker needs ~300 MB. Starting one without that much free
+        # pushes everything into swap and makes Jarvis unusable (even "what time is it" crawled), so
+        # wait for memory, up to an hour, then give up with a clear message.
+        waited = self._wait_for_memory(job)
+        if not waited:
+            with self._lock:
+                job.status, job.finished = "failed", time.time()
+                job.result = ("Not enough free memory on the server to run this here, and it couldn't run in "
+                              "the cloud. Create the private 'jarvis-workspace' repository on GitHub (Private, "
+                              "with a README) so jobs run in the cloud, then ask again.")
+                self._save()
+            self.on_finished(job)
+            return
 
         cmd = [
             self.claude or "claude", "-p", job.task,

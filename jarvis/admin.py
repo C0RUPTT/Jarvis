@@ -170,7 +170,8 @@ def update() -> str:
     reqs = ROOT / ("requirements-server.txt" if (ROOT / "requirements-server.txt").exists() else "requirements.txt")
     code, pip_out = _run([sys.executable, "-m", "pip", "install", "-q", "-r", str(reqs)], timeout=900)
     if code == 0:   # smoke test: the new code must at least import
-        code, pip_out = _run([sys.executable, "-m", "jarvis.selftest"], timeout=180)
+        # (normally 2-3 s; generous, because a busy 1 GB server can be very slow)
+        code, pip_out = _run([sys.executable, "-m", "jarvis.selftest"], timeout=480)
     if code != 0:
         try:
             FAILED_FILE.parent.mkdir(parents=True, exist_ok=True)
