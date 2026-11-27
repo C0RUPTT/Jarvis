@@ -535,7 +535,8 @@
     };
     srTimer = setInterval(() => {
       const now = performance.now();
-      if (text && now - lastHeard > 1100) {                       // a 1.1-second pause: they've finished
+      const spokeFor = now - started;
+      if (text && now - lastHeard > (spokeFor > 45000 ? 2200 : spokeFor > 15000 ? 1600 : 1100)) {   // paused long enough
         done = true; stopSR(); turnEndedAt = lastHeard;
         if (isStandby(text)) goStandby(); else sendText(text);
       } else if (!text && now - started > 60000) {                // a minute of silence: restart quietly
@@ -669,15 +670,19 @@
       const threshold = Math.max(noiseFloor * 2.5, 0.006);
       orb.style.setProperty("--level", Math.min(1, rms * 8).toFixed(2));
       if (rms > threshold && (speechStart || now > tailUntil)) { lastLoud = now; if (!speechStart) { speechStart = now; userTalking = true; } }
-      if (speechStart && now - lastLoud > 900) {                 // a 0.9-second pause: they've finished
+      // A short request ends after a 0.9 s pause; once you've been talking a while (explaining
+      // something), you're allowed longer pauses to think: 1.6 s after 15 s, 2.2 s after 45 s.
+      const talkedFor = speechStart ? now - speechStart : 0;
+      const pauseAllowed = talkedFor > 45000 ? 2200 : talkedFor > 15000 ? 1600 : 900;
+      if (speechStart && now - lastLoud > pauseAllowed) {        // paused long enough: they've finished
         clearInterval(vadTimer); vadTimer = null;
         if (lastLoud - speechStart < 250) { recorder.onstop = () => listen(); recorder.stop(); return; } // a cough
-        turnEndedAt = performance.now() - 900;    // when you actually stopped talking
+        turnEndedAt = performance.now() - pauseAllowed;   // when you actually stopped talking
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime }));
         recorder.stop();
       } else if (!speechStart && now - recStart > 15000) {       // long silence: start a fresh clip
         recorder.onstop = null; recorder.stop(); startRecorder();
-      } else if (speechStart && now - speechStart > 45000) {     // very long: send what we have
+      } else if (speechStart && now - speechStart > 300000) {    // 5 minutes non-stop: send what we have
         clearInterval(vadTimer); vadTimer = null;
         recorder.onstop = () => send(new Blob(chunks, { type: recorder.mimeType || mime })); recorder.stop();
       }

@@ -18,9 +18,11 @@ def enabled() -> bool:
     return bool(os.getenv("GROQ_API_KEY"))
 
 
-def transcribe(path: str, timeout: float = 6) -> str:
+def transcribe(path: str, timeout: float | None = None) -> str:
     """Raises on any problem (the caller falls back to local Whisper)."""
     data = Path(path).read_bytes()
+    if timeout is None:   # long recordings take longer to upload and transcribe
+        timeout = 6 + len(data) / 100_000
     boundary = uuid.uuid4().hex
     name = Path(path).name
     if name.endswith(".oga"):          # Telegram voice notes: same format, the name Groq accepts
