@@ -349,6 +349,14 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                     parts = [p for p in rest if p.strip()]
                 elif streamed and len(reply) > len(spoken_reply):
                     parts = [spoken.FULL_ON_PHONE]   # long: the start was spoken, the whole text is on the phone
+                if streamed:
+                    # Never say a sentence twice: Claude's final answer often restates what it said
+                    # before using a tool ("Yes, I can get your location. Let me test it now.").
+                    import difflib
+
+                    heard_before = [norm(x) for x in streamed]
+                    parts = [p for p in parts if not any(
+                        difflib.SequenceMatcher(None, norm(p), h).ratio() > 0.75 for h in heard_before)]
                 for part in parts:
                     _add_speech(job, part)
             except Exception as e:  # noqa: BLE001
