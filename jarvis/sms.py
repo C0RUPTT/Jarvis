@@ -83,9 +83,40 @@ def setup_email(arg: str, env_file: Path) -> str:
             "Then /texttest sends another test. /textoff turns it off.")
 
 
+busy = None   # set by the runtime: True while Jarvis is talking (web app or Siri), so a spoken alert waits
+
+
+def short(text: str, limit: int = 200) -> str:
+    """The spoken alert, kept short: you're listening, and the full text is in Telegram."""
+    text = re.sub(r"\s*The full version is on your phone\.?", "", re.sub(r"\s+", " ", text)).strip()
+    if len(text) <= limit:
+        return text
+    out = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if out and len(out) + len(sentence) > limit:
+            break
+        out = f"{out} {sentence}".strip()
+    if len(out) > limit:
+        out = out[:limit].rsplit(" ", 1)[0] + "."
+    return out + " Details are in Telegram."
+
+
 def send_async(text: str) -> None:
-    if configured():
-        threading.Thread(target=send, args=(text,), daemon=True).start()
+    if not configured():
+        return
+    if is_email_mode():
+        text = short(text)
+
+    def run():
+        # Never talk over Jarvis: while it's speaking to you (web app or Siri), wait (up to 3 minutes).
+        import time
+
+        waited = 0
+        while busy is not None and busy() and waited < 180:
+            time.sleep(3)
+            waited += 3
+        send(text)
+    threading.Thread(target=run, daemon=True).start()
 
 
 def setup(arg: str, env_file: Path) -> str:

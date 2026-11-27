@@ -395,6 +395,11 @@ def build(config: Config, speak: Callable[[str], None] | None = None,
     brain = make_brain(ctx, on_interim)
     rt = Runtime(config=config, announcer=announcer, ctx=ctx, brain=brain, jobs=jobs, telegram=None)
     rt._load_awaiting()
+    from . import sms
+
+    # Spoken Mail alerts wait while Jarvis is talking to you (a Siri turn in the last 45 s, or the web
+    # app in a conversation), so they never talk over it.
+    sms.busy = lambda: time.time() - rt.last_siri < 45 or time.time() < announcer.web_talking_until
     _remember_once(config.data_dir, "yattee",
                    "Uses the YouTube app for videos and the Yattee app for music (never YouTube for music).")
     if os.getenv("JARVIS_NOTIFY_LISTENER", "1") != "0":
