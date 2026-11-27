@@ -671,6 +671,7 @@
       }
       if (!micRetried && now - recStart > 4000 && loudest < 0.00001 && !speechStart) {   // no signal at all: the mic isn't really on
         micRetried = true; diag("mic-silent", { loudest });
+        if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; }   // the engine may be the deaf part
         clearInterval(vadTimer); vadTimer = null; recorder.onstop = null; try { recorder.stop(); } catch {}
         stream.getTracks().forEach(t => t.stop()); stream = null;
         listen(); return;
@@ -877,7 +878,12 @@
   async function startConversation() {
     markActive(true);
     tapToResume = false;
-    if (audioCtx && audioCtx.state !== "running") { try { audioCtx.close(); } catch {} audioCtx = null; }   // a fresh one, on this tap
+    // Every tap to start gets a fresh audio engine and a fresh mic. After you've been in another
+    // app, iPhone can leave the old engine "running" but deaf (it hears only silence), and reusing
+    // it meant tapping off and on didn't help. Building new ones on a tap always works.
+    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    calibrated = false;
     micRetried = false;
     diag("start", { mode: useSR ? "phone-recognition" : "recording", ua: navigator.userAgent.slice(0, 120) });
     unlockAudio();
