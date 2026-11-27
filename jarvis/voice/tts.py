@@ -21,28 +21,49 @@ def clean_for_speech(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+FALLBACK_VOICE = "en-GB-RyanNeural"   # the original Jarvis voice: used if a chosen voice ever fails
+_failed_voices: dict = {}             # voice -> when it last failed (skipped for 10 minutes)
+
+
+def _edge(text: str, voice: str) -> bytes:
+    import asyncio
+    import os
+
+    import edge_tts
+
+    rate = os.getenv("JARVIS_VOICE_RATE", "+0%")     # e.g. "-5%" for a slightly unhurried delivery
+    pitch = os.getenv("JARVIS_VOICE_PITCH", "+0Hz")
+
+    async def run() -> bytes:
+        audio = bytearray()
+        async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).stream():
+            if chunk["type"] == "audio":
+                audio.extend(chunk["data"])
+        return bytes(audio)
+    return asyncio.run(run())
+
+
 def synthesize_mp3(text: str, voice: str) -> bytes | None:
     """Turn text into MP3 audio with a free Microsoft neural voice (edge-tts, needs internet).
-    Returns None if unavailable, and the phone falls back to its own built-in voice."""
+    If the chosen voice fails, the original Jarvis voice is used; if that fails too, None, and the
+    phone falls back to its own built-in voice."""
+    import time as _time
+
     text = clean_for_speech(text)
     if not voice or not text:
         return None
-    try:
-        import asyncio
-
-        import edge_tts
-
-        async def run() -> bytes:
-            audio = bytearray()
-            async for chunk in edge_tts.Communicate(text, voice).stream():
-                if chunk["type"] == "audio":
-                    audio.extend(chunk["data"])
-            return bytes(audio)
-
-        return asyncio.run(run()) or None
-    except Exception as e:  # noqa: BLE001
-        print(f"[tts] online voice unavailable ({e}); the phone will use its own voice.")
-        return None
+    for v in dict.fromkeys([voice, FALLBACK_VOICE]):
+        if _time.time() - _failed_voices.get(v, 0) < 600:
+            continue
+        try:
+            audio = _edge(text, v)
+            if audio:
+                return audio
+            raise RuntimeError("no audio")
+        except Exception as e:  # noqa: BLE001
+            _failed_voices[v] = _time.time()
+            print(f"[tts] voice {v} failed ({e}); trying the next one.")
+    return None
 
 
 class Speaker:

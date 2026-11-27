@@ -116,11 +116,14 @@ def create_app(config: Config, speak_on_laptop: bool = False):
     pending: list[dict] = []          # late Siri answers: {"q", "future", "done_at", "delivered"}
     pending_lock = threading.Lock()
 
-    def _late_text(item: dict) -> str:
+    def _late_text(item: dict, for_reading: bool = False) -> str:
+        """A late answer: spoken straight away, with no 'about your earlier question' preamble.
+        Only the Telegram copy (for reading later) notes what it was about, at the end."""
         try:
-            return f"About your earlier question, \"{item['q'][:60]}\": {item['future'].result()}"
+            answer = item["future"].result()
         except Exception as e:  # noqa: BLE001
-            return f"Sorry, your earlier question \"{item['q'][:60]}\" failed: {e}"
+            answer = f"Sorry, sir, that one failed: {e}"
+        return f"{answer}\n\n(You asked: {item['q'][:80]})" if for_reading else answer
 
     recently_answered: list[tuple[float, str]] = []   # (time, question) of late answers just spoken
 
@@ -153,11 +156,11 @@ def create_app(config: Config, speak_on_laptop: bool = False):
             if not item.get("waits") and not wait_state.get("hinted_today") == time.strftime("%Y-%m-%d"):
                 wait_state["hinted_today"] = time.strftime("%Y-%m-%d")
                 print("[siri] the Shortcut never called the waiting step for a late answer")
-                announcer.announce(_late_text(item) + "\n\n(Siri didn't wait for this answer: the Shortcut's "
+                announcer.announce(_late_text(item, for_reading=True) + "\n\n(Siri didn't wait for this answer: the Shortcut's "
                                    "waiting step isn't reaching Jarvis. See docs/SIRI_SHORTCUT.md, or send /shortcut.)",
                                    reply=True)
                 return
-            announcer.announce(_late_text(item), reply=True)
+            announcer.announce(_late_text(item, for_reading=True), reply=True)
         threading.Timer(HANDOFF_GRACE, later).start()
 
     def _similar(a: str, b: str) -> bool:

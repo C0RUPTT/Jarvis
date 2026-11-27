@@ -88,6 +88,7 @@ busy = None   # set by the runtime: True while Jarvis is talking (web app or Sir
 
 def short(text: str, limit: int = 200) -> str:
     """The spoken alert, kept short: you're listening, and the full text is in Telegram."""
+    text = re.sub(r"\s*\(You asked:.*?\)", "", text, flags=re.S)   # that note is for reading, not hearing
     text = re.sub(r"\s*The full version is on your phone\.?", "", re.sub(r"\s+", " ", text)).strip()
     if len(text) <= limit:
         return text

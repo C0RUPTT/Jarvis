@@ -10,6 +10,7 @@
     /place    save a named place: /place Sam = 12 Oak St  (/places lists them)
     /announcetest  test Siri reading Jarvis messages in your AirPods (lock the phone)
     /obsidian  Obsidian notes by voice: status, or the one-time setup
+    /voice    hear Jarvis voice samples and pick one (/voice 4)
     /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
@@ -471,6 +472,51 @@ def _obsidian_status() -> str:
             + ("running." if notes.sync_running() else "NOT running (fix: sudo systemctl restart obsidian-sync)."))
 
 
+VOICES = [
+    ("en-GB-RyanNeural", "Ryan (British): the current voice"),
+    ("en-GB-ThomasNeural", "Thomas (British)"),
+    ("en-GB-OllieMultilingualNeural", "Ollie (British, newer natural style)"),
+    ("en-US-AndrewMultilingualNeural", "Andrew (American, newest and most natural)"),
+    ("en-US-BrianMultilingualNeural", "Brian (American, warm and natural)"),
+]
+VOICE_SAMPLE = ("Good evening, sir. Your four forty-five has moved to six, and it looks like rain later, "
+                "so I'd take a jacket. Shall I let them know you'll be there?")
+
+
+def _voice_cmd(config, arg: str, telegram) -> str:
+    """/voice: hear samples; /voice 3: switch to voice 3 (the current one stays as the fallback)."""
+    from .voice.tts import _edge
+
+    arg = arg.strip()
+    if arg:
+        pick = VOICES[int(arg) - 1][0] if arg.isdigit() and 1 <= int(arg) <= len(VOICES) else arg
+        try:   # never switch to a voice that doesn't work right now
+            if not _edge("Very good, sir. This is my new voice.", pick):
+                raise RuntimeError("no audio")
+        except Exception as e:  # noqa: BLE001
+            return f"That voice isn't working ({e}), so I've kept the current one."
+        set_env_value("JARVIS_ONLINE_VOICE", pick)
+        os.environ["JARVIS_ONLINE_VOICE"] = pick
+        config.online_voice = pick
+        name = next((label for v, label in VOICES if v == pick), pick)
+        return f"Switched to {name}, for the web app and Jarvis's voice notes. /voice 1 goes back."
+    if telegram is None:
+        return "Telegram isn't connected."
+
+    def send_samples():
+        for i, (voice, label) in enumerate(VOICES, 1):
+            try:
+                audio = _edge(VOICE_SAMPLE, voice)
+                telegram.send_voice(audio)
+                telegram.send(f"{i}. {label}" + ("  <- current" if voice == config.online_voice else ""), silent=True)
+            except Exception:  # noqa: BLE001
+                telegram.send(f"{i}. {label}: not available right now", silent=True)
+        telegram.send("Pick one with /voice and its number, e.g. /voice 4. Your current voice stays as the "
+                      "automatic fallback if the new one ever fails.")
+    threading.Thread(target=send_samples, daemon=True).start()
+    return "Sending a short sample of each voice. Listen, then pick one with /voice <number>."
+
+
 def _places_list(config) -> str:
     from . import places
 
@@ -512,6 +558,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "voice": lambda arg="": _voice_cmd(config, arg, getattr(brain, "_telegram", None)),
         "obsidian": lambda: _obsidian_status(),
         "announcetest": lambda: delivery_state(brain) + "\n\n" + _announce_test(getattr(brain, "_telegram", None)),
         "place": lambda arg="": _place_cmd(config, arg),
