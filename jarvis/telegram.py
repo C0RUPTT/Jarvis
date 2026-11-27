@@ -31,7 +31,7 @@ class TelegramBot:
         self.transcribe: Callable[[str], str] | None = None    # audio file path -> text
         self.synthesize: Callable[[str], bytes | None] | None = None  # text -> mp3 bytes
         self.commands: dict[str, Callable[[], str]] = {}
-        self.secret_commands: set[str] = {"github", "textsetup", "groq"}
+        self.secret_commands: set[str] = {"github", "textsetup", "groq", "emailsetup"}
 
     # -- sending ---------------------------------------------------------------
 

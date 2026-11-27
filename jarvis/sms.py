@@ -34,11 +34,17 @@ def send(text: str) -> str:
     if not (to and user and password):
         return "not set up"
     body = PREFIX + re.sub(r"\s+", " ", text).strip()
-    if len(body) > 300:                       # long texts get split or dropped by the gateway
-        body = body[:297] + "..."
     msg = EmailMessage()
     msg["From"], msg["To"] = user, to
-    msg.set_content(body)                     # no subject: it would be prepended to the text
+    if is_email_mode():
+        # A real inbox (the iPhone Mail app): the subject is what the automation speaks, so it's the
+        # whole message (Mail shows long subjects fine); the body repeats it for reading.
+        msg["Subject"] = body[:900]
+        msg.set_content(body)
+    else:
+        if len(body) > 300:                   # long texts get split or dropped by the gateway
+            body = body[:297] + "..."
+        msg.set_content(body)                 # no subject: it would be prepended to the text
     try:
         with smtplib.SMTP(host, 587, timeout=20) as smtp:
             smtp.starttls(context=ssl.create_default_context())
@@ -47,6 +53,34 @@ def send(text: str) -> str:
         return ""
     except (smtplib.SMTPException, OSError) as e:
         return str(e)
+
+
+def is_email_mode() -> bool:
+    """Alerts go to an email inbox (spoken by an iPhone Mail automation), not a carrier text gateway."""
+    to = os.getenv("JARVIS_SMS_TO", "")
+    return "@" in to and to.split("@", 1)[1] not in CARRIER_GATEWAYS.values()
+
+
+def setup_email(arg: str, env_file: Path) -> str:
+    """/emailsetup <your inbox address> <gmail address to send from> <gmail app password>"""
+    parts = arg.split()
+    if len(parts) < 3 or "@" not in parts[0] or "@" not in parts[1]:
+        return ("Send it like this (your message is deleted right after):\n"
+                "/emailsetup you@icloud.com you@gmail.com abcd efgh ijkl mnop\n"
+                "1st: the address your iPhone Mail app receives (iCloud is best: it arrives instantly).\n"
+                "2nd + 3rd: a Gmail address and its app password, to send from. See /emailhelp.")
+    values = {"JARVIS_SMS_TO": parts[0], "JARVIS_SMTP_USER": parts[1], "JARVIS_SMTP_PASSWORD": "".join(parts[2:])}
+    os.environ.update(values)
+    error = send("Test alert. If you hear this, spoken alerts are working.")
+    if error:
+        for k in values:
+            os.environ.pop(k, None)
+        return f"Sending the test email failed: {error}\nCheck the Gmail address and app password."
+    lines = [l for l in (env_file.read_text().splitlines() if env_file.exists() else [])
+             if not any(l.startswith(k + "=") for k in values)]
+    env_file.write_text("\n".join(lines + [f"{k}={v}" for k, v in values.items()]) + "\n")
+    return ("Test email sent to " + parts[0] + ". Now set up the speaking automation (/emailhelp, step 3). "
+            "Then /texttest sends another test. /textoff turns it off.")
 
 
 def send_async(text: str) -> None:

@@ -6,6 +6,7 @@
     /update   pull the latest Jarvis code, install packages, restart
     /restart  restart Jarvis (systemd brings it straight back)
     /logs     the last lines of Jarvis's log
+    /emailhelp  spoken alerts through the Mail app (steps); /emailsetup to connect
     /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
@@ -387,6 +388,29 @@ iPhone may also show "Call ...?": tap Call. That confirmation is Apple's rule an
 Test it: run Jarvis Call by itself, type a name. Then say "Jarvis, call <name>"."""
 
 
+EMAIL_HELP = """Spoken alerts through the Mail app: Jarvis emails you each alert, and an iPhone automation reads it out loud the moment it arrives (locked or unlocked, speaker or AirPods). Telegram keeps working as usual.
+
+1. A Gmail app password (to send from), 3 min:
+   Safari > myaccount.google.com/apppasswords > sign in > App name: Jarvis > Create. Copy the 16 letters.
+   (Needs 2-step verification on that Google account. It can only send email; revoke it there any time.)
+
+2. Connect it. Send this to me here (the message is deleted right after):
+   /emailsetup you@icloud.com you@gmail.com abcd efgh ijkl mnop
+   - 1st address: where your iPhone Mail app receives. Use your iCloud address if you have one: iCloud mail arrives instantly. (Gmail in the Mail app can be minutes late.)
+   - Then the Gmail address and the app password.
+   A test email arrives in Mail.
+
+3. The speaking automation (Shortcuts app > Automation > + > New Automation):
+   - Choose Email.
+   - Subject Contains:  Jarvis:
+   - Choose Run Immediately, and turn Notify When Run off. Next.
+   - New Blank Automation > add "Speak Text". Tap its text > Select Variable > Shortcut Input > tap it again and choose Subject.
+   - Done.
+
+4. Test: send /texttest here. Your phone should say "Jarvis: ..." out loud within a few seconds.
+Off any time: /textoff. Tip: in Mail, you can mute or file these emails with a rule; the automation still reads them."""
+
+
 def commands(config, jobs, brain=None) -> dict:
     return {
         "status": lambda: status(config, jobs, brain),
@@ -395,6 +419,8 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "emailhelp": lambda: EMAIL_HELP,
+        "emailsetup": lambda arg="": __import__("jarvis.sms", fromlist=["x"]).setup_email(arg, ROOT / ".env"),
         "siri": lambda: __import__("jarvis.siritrace", fromlist=["x"]).report(),
         "stats": lambda arg="": __import__("jarvis.metrics", fromlist=["x"]).report(
             config.data_dir, (float(arg) / 24) if arg.replace(".", "", 1).isdigit() else 3),
