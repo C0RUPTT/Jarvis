@@ -8,6 +8,7 @@
     /logs     the last lines of Jarvis's log
     /emailhelp  spoken alerts through the Mail app (steps); /emailsetup to connect
     /place    save a named place: /place Sam = 12 Oak St  (/places lists them)
+    /announcetest  test Siri reading Jarvis messages in your AirPods (lock the phone)
     /callsetup  how to let Jarvis call your contacts by name
     /locationsetup  how to let Jarvis use your location for route questions
     /siri     timeline of recent Siri conversations (where one went wrong)
@@ -417,6 +418,18 @@ EMAIL_HELP = """Spoken alerts through the Mail app: Jarvis emails you each alert
 Off any time: /textoff. Tip: in Mail, you can mute or file these emails with a rule; the automation still reads them."""
 
 
+def _announce_test(telegram) -> str:
+    """A normal (not silent) Telegram message in 20 seconds: time to lock the phone with AirPods in."""
+    if telegram is None:
+        return "Telegram isn't connected."
+    threading.Timer(20, lambda: telegram.send(
+        "Jarvis here, sir. If you heard this in your AirPods, announcements are working.")).start()
+    return ("Lock your phone now, with your AirPods in. In 20 seconds I'll send a test message; Siri should "
+            "read it aloud. Nothing? Check: Settings > Notifications > Announce Notifications (on, with "
+            "Telegram on and Headphones on), Telegram's notifications allowed, and no Focus (moon icon) "
+            "blocking Telegram.")
+
+
 def _places_list(config) -> str:
     from . import places
 
@@ -458,6 +471,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
+        "announcetest": lambda: _announce_test(getattr(brain, "_telegram", None)),
         "place": lambda arg="": _place_cmd(config, arg),
         "places": lambda: _places_list(config),
         "tomtom": lambda arg="": _save_tomtom(arg),
