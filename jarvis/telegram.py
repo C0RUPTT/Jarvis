@@ -68,7 +68,22 @@ class TelegramBot:
     # -- receiving ---------------------------------------------------------------
 
     def start(self) -> None:
+        import queue
+
+        self._chat_queue = queue.Queue()
+        threading.Thread(target=self._chat_loop, daemon=True, name="jarvis-telegram-chat").start()
         threading.Thread(target=self._poll_loop, daemon=True, name="jarvis-telegram").start()
+
+    def _chat_loop(self) -> None:
+        while True:
+            self._safe_handle(self._chat_queue.get())
+
+    def _safe_handle(self, update: dict) -> None:
+        try:
+            self._handle(update)
+        except Exception as e:  # noqa: BLE001
+            print(f"[telegram] error handling message: {e}")
+            self.send(f"Sorry, something went wrong: {e}")
 
     offset_file = None   # set by runtime: remembers which messages were handled, across restarts
 
@@ -92,11 +107,14 @@ class TelegramBot:
                         self.offset_file.write_text(str(self.offset))
                 except OSError:
                     pass
-                try:
-                    self._handle(update)
-                except Exception as e:  # noqa: BLE001
-                    print(f"[telegram] error handling message: {e}")
-                    self.send(f"Sorry, something went wrong: {e}")
+                # /commands are plain code and answer at once, each on its own; messages for
+                # Claude go through one queue, in order. (Everything used to share one queue, so a
+                # slow Claude reply held up /status, /update and every other command behind it.)
+                text = ((update.get("message") or {}).get("text") or "").strip()
+                if text.startswith("/"):
+                    threading.Thread(target=self._safe_handle, args=(update,), daemon=True).start()
+                else:
+                    self._chat_queue.put(update)
 
     def _handle(self, update: dict) -> None:
         msg = update.get("message") or {}
