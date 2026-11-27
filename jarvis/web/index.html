@@ -233,16 +233,15 @@
     if (s !== "listening") orb.style.setProperty("--level", 0);
   }
 
-  // Voice mode is the default; "Text" in the header shows the transcript and the typing box.
-  const voicePref = safeGet("jarvis-voice-mode");
-  document.body.classList.toggle("voice", voicePref !== "off");
+  // Voice mode (no text) every time the app opens; "Text" in the header shows the transcript and the
+  // typing box until the app is closed. (It used to remember "Text", so it kept opening with text.)
+  try { localStorage.removeItem("jarvis-voice-mode"); } catch {}
+  document.body.classList.add("voice");
   $("textToggle").onclick = () => {
     const voice = !document.body.classList.toggle("voice");
-    safeSet("jarvis-voice-mode", voice ? "on" : "off");
     $("textToggle").classList.toggle("active", !voice);
     log.scrollTop = log.scrollHeight;
   };
-  $("textToggle").classList.toggle("active", voicePref === "off");
 
   function add(kind, text, link) {
     if (link) {   // in voice mode a link still needs somewhere to be tapped
