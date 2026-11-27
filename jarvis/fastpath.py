@@ -33,6 +33,11 @@ _PATTERNS = [
     ("time", r"^(what'?s|what is|tell me) the time( now| right now| please)?$|^what time is it( now| right now| please)?$|"
              r"^(do you (know|have) )?the time( please)?$"),
     ("date", r"^(what'?s|what is) (the date|today'?s date)( today)?$|^what day is (it|today)$|^what'?s today$"),
+    ("weather", r"^(what'?s|how'?s|what is|how is) (the )?weather( like)?( today| right now| now| outside| out)?( sir)?$|"
+                r"^(what'?s|how'?s) it (like )?outside$|^weather( today)?$"),
+    ("calendar", r"^(what'?s|what is) (on )?my (calendar|schedule|agenda)( for)?( today)?$|"
+                 r"^what do i have (on |going on )?today$|^what'?s my day( look like)?( today)?$|"
+                 r"^(do i have )?(any )?(meetings|appointments|events) today$|^what'?s on (for )?today$"),
 ]
 _COMPILED = [(name, re.compile(p, re.I)) for name, p in _PATTERNS]
 
@@ -164,7 +169,10 @@ def handle(text: str, rt) -> str | None:
         return None
     for name, pattern in _COMPILED:
         if pattern.search(cleaned):
-            return _ACTIONS[name](rt)
+            try:
+                return _ACTIONS[name](rt)
+            except _NotHere:
+                return None
     return None
 
 
@@ -300,7 +308,31 @@ def _claude_long(rt) -> str:
 
 _ACTIONS = {"claude_every": _claude_every, "claude_long": _claude_long, "read_unread": _read_unread, "claude_once": _claude_once, "claude_always": _claude_always, "claude_off": _claude_off,
             "update": _update, "morning": _morning, "hold": _hold, "quiet": _quiet, "normal": _normal, "missed": _missed, "jobs": _jobs,
-            "time": lambda rt: _time(), "date": lambda rt: _date()}
+            "time": lambda rt: _time(), "date": lambda rt: _date(),
+            "weather": lambda rt: _weather(rt), "calendar": lambda rt: _calendar(rt)}
+
+
+class _NotHere(Exception):
+    """This shortcut can't answer it (not set up): let Claude handle the question instead."""
+
+
+def _weather(rt):
+    import os
+
+    if not os.getenv("JARVIS_CITY"):
+        raise _NotHere   # no home city set (/city): Claude can work it out from the location instead
+    line = rt._weather_line()
+    if not line:
+        raise _NotHere
+    return line.replace("Weather: ", "Right now it's ", 1).replace(". Today: ", ". Today: ", 1)
+
+
+def _calendar(rt):
+    import os
+
+    if not os.getenv("JARVIS_ICLOUD_USER"):
+        raise _NotHere
+    return rt._today_calendar()
 
 
 def _time() -> str:
