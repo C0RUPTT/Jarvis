@@ -50,8 +50,27 @@ def _restart_soon(delay: float = 2.0) -> None:
     threading.Timer(delay, lambda: os._exit(0)).start()
 
 
+def delivery_state(brain) -> str:
+    """How Jarvis is sending notifications right now (silent ones aren't read aloud in AirPods)."""
+    rt = getattr(brain, "_runtime", None)
+    a = getattr(rt, "announcer", None)
+    if a is None:
+        return "Notifications: unknown"
+    if a.night:
+        how = "NIGHT MODE: held until you talk to Jarvis in the morning (only urgent ones get through)"
+    elif a.mode == "hold":
+        how = "HOLD mode: kept for later (say 'back to normal')"
+    elif a.mode == "quiet":
+        how = "QUIET mode: sent silently, so Siri won't read them (say 'back to normal')"
+    else:
+        how = "normal (with sound)"
+    if time.time() < getattr(a, "web_talking_until", 0):
+        how += "; the web app is open, so it speaks them and Telegram gets a silent copy"
+    return f"Notifications: {how}"
+
+
 def status(config, jobs, brain=None) -> str:
-    lines = []
+    lines = [delivery_state(brain)]
     try:
         import psutil
 
@@ -471,7 +490,7 @@ def commands(config, jobs, brain=None) -> dict:
         "logs": logs,
         "locationsetup": lambda: LOCATION_SETUP,
         "callsetup": lambda: CALL_SETUP,
-        "announcetest": lambda: _announce_test(getattr(brain, "_telegram", None)),
+        "announcetest": lambda: delivery_state(brain) + "\n\n" + _announce_test(getattr(brain, "_telegram", None)),
         "place": lambda arg="": _place_cmd(config, arg),
         "places": lambda: _places_list(config),
         "tomtom": lambda arg="": _save_tomtom(arg),
