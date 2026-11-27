@@ -467,9 +467,10 @@
   let useSR = !!SR && safeGet("jarvis-stt") === "phone", rec = null, srTimer = null, srCaptureFails = 0, srNetworkFails = 0;
 
   // Diagnostics: what the microphone is doing, in Jarvis's log (/logs), to fix problems remotely.
+  const HOME_SCREEN = window.navigator.standalone === true || window.matchMedia?.("(display-mode: standalone)").matches;
   function diag(event, data = {}) {
     try { fetch("/api/diag", { method: "POST", headers: { "X-Jarvis-Token": token, "Content-Type": "application/json" },
-      body: JSON.stringify({ event, ...data }) }).catch(() => {}); } catch {}
+      body: JSON.stringify({ event, app: HOME_SCREEN ? "home-screen" : "browser", ...data }) }).catch(() => {}); } catch {}
   }
 
   function stopSR() {
@@ -767,6 +768,17 @@
     } catch {}
     shownUpTo = Date.now() / 1000;
   });
+  // Reloaded by iPhone mid-conversation (common for the home-screen app): one tap carries on.
+  (() => {
+    let last = 0; try { last = +localStorage.getItem("jarvis-active") || 0; } catch {}
+    if (!token || handoff || !last || Date.now() - last > 10 * 60 * 1000) return;
+    diag("reloaded-mid-conversation", { ago: Math.round((Date.now() - last) / 1000) });
+    const cover = document.createElement("div");
+    cover.id = "handoff";
+    cover.innerHTML = "<div><b>Tap anywhere</b><br>to carry on talking to Jarvis</div>";
+    document.body.appendChild(cover);
+    cover.onclick = () => { cover.remove(); startConversation(); };
+  })();
   // Siri handed over: one tap starts hands-free talking (iPhone needs a tap before it lets a page
   // use the speaker), so cover the screen with a big tap target.
   if (handoff && token) {
@@ -822,20 +834,39 @@
     if (!tapToResume || e.target === orb) return;
     tapToResume = false; startConversation();
   });
+  // Keeping the screen on during a conversation: Safari honours the standard request, but home-screen
+  // apps often don't, so the screen slept and iPhone paused the app mid-conversation. Fallback: a
+  // tiny silent, muted video looping out of sight, which iPhone treats as "something's playing".
+  const keepAwakeVideo = Object.assign(document.createElement("video"), {
+    muted: true, loop: true, playsInline: true, src: "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMrbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABeG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAThzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAK/+EAFmdCwArZHsBEAAADAAQAAAMACDxImSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAApAAAAKQAAAABhzdHRzAAAAAAAAAAEAAAACAABAAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAAChgAAAAoAAAAUc3RjbwAAAAAAAAABAAADWwAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAAKYbWRhdAAAAnAGBf//bNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAOZYiEBb///w9FAAFPf4AAAAAGQZo4CvqA" });
+  keepAwakeVideo.setAttribute("playsinline", ""); keepAwakeVideo.setAttribute("muted", "");
+  keepAwakeVideo.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;bottom:0;left:0";
+  document.body.appendChild(keepAwakeVideo);
+  async function keepScreenOn() {
+    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { wakeLock = null; }
+    if (!wakeLock || HOME_SCREEN) keepAwakeVideo.play().catch(() => {});
+  }
+  function letScreenSleep() { keepAwakeVideo.pause(); }
+  // Remember that a conversation is going on, so if iPhone reloads the app in the background (home-
+  // screen apps get reloaded a lot) it can offer to carry on instead of silently forgetting.
+  function markActive(on) { try { on ? localStorage.setItem("jarvis-active", String(Date.now())) : localStorage.removeItem("jarvis-active"); } catch {} }
+  setInterval(() => { if (conversation) markActive(true); }, 15000);
   async function startConversation() {
+    markActive(true);
     tapToResume = false;
     if (audioCtx && audioCtx.state !== "running") { try { audioCtx.close(); } catch {} audioCtx = null; }   // a fresh one, on this tap
     micRetried = false;
     diag("start", { mode: useSR ? "phone-recognition" : "recording", ua: navigator.userAgent.slice(0, 120) });
     unlockAudio();
     conversation = true;
-    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+    await keepScreenOn();
     listen();
   }
   function endConversation() {
+    markActive(false);
     stopWake?.();
     conversation = false; closeMic(); stopSpeaking();
-    wakeLock?.release?.(); wakeLock = null;
+    wakeLock?.release?.(); wakeLock = null; letScreenSleep();
     setState("idle");
   }
 
@@ -859,6 +890,7 @@
   const WAKE = /\b(hey |hi |ok(ay)? |yo )?(jarvis|jervis|jarvas|jarvi's)\b[,.!?]*\s*/i;
   let wakeRec = null, wakeTimer = null, wakeReleased = Promise.resolve();
   async function goStandby() {
+    markActive(false);   // you said you were done: a reload shouldn't offer to carry on
     conversation = false; pauseMic(); stopSR();
     const line = SIGNOFFS[Math.floor(Math.random() * SIGNOFFS.length)];
     setState("speaking");
@@ -1063,7 +1095,7 @@
   }
   async function onReturn() {
     if (document.visibilityState !== "visible") return;
-    if (conversation && !wakeLock) { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+    if (conversation) await keepScreenOn();
     if (!resumeOnReturn) return;
     resumeOnReturn = false;
     diag("app-visible", { state, conversation });
