@@ -290,7 +290,7 @@
   function fetchPart(id, i) {
     return fetch(`/api/speech/${id}/${i}`, { headers: { "X-Jarvis-Token": token } })
       .then(async r => {
-        if (r.ok) return { blob: await r.blob() };
+        if (r.ok) return { blob: await r.blob(), text: decodeURIComponent(r.headers.get("X-Text") || "") };
         if (r.status === 410) return { end: true };
         const d = await r.json().catch(() => ({}));
         return d.text ? { text: d.text } : { end: true };
@@ -324,12 +324,15 @@
   }
   async function speakParts(data) {
     const run = ++speechRun;
-    let next = fetchPart(data.speech_id, 0), heard = 0;
+    let next = fetchPart(data.speech_id, 0), heard = 0, lastPartSaid = "";
     for (let i = 0; ; i++) {
       const part = await next;
       if (run !== speechRun) return -1;                     // interrupted (you tapped or talked)
       if (part.end) return heard;                           // that was all
       next = fetchPart(data.speech_id, i + 1);              // the next sentence loads while this plays
+      const said = (part.text || "") + "|" + (part.blob ? part.blob.size : 0);
+      if (part.blob && said === lastPartSaid) continue;     // safety net: never the same sentence twice in a row
+      lastPartSaid = said;
       if (i === 0 && part.blob) player.addEventListener("playing", reportTiming, { once: true });
       const failed = !part.blob || (await playBlob(part.blob)) === "failed";
       if (failed && part.text) await new Promise(r => speakLocally(part.text, r));

@@ -321,6 +321,15 @@ def create_app(config: Config, speak_on_laptop: bool = False):
                 sentence = clean_for_speech(exact_times(sentence))
                 if not sentence or job is None or sum(len(x) for x in streamed) > 260:
                     return   # long answers: speak the start only; the rest goes to the phone below
+                # Never the same sentence twice: when the connection to Claude drops mid-answer the
+                # question is retried and streams again from the start (and Claude sometimes
+                # repeats a line itself).
+                import difflib
+
+                key = " ".join(re.sub(r"[^a-z0-9 ]", " ", sentence.lower()).split())
+                if any(difflib.SequenceMatcher(None, key, " ".join(re.sub(r"[^a-z0-9 ]", " ", x.lower()).split())).ratio() > 0.85
+                       for x in streamed):
+                    return
                 streamed.append(sentence)
                 _add_speech(job, sentence)
                 if talk_id:
